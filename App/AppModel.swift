@@ -94,7 +94,14 @@ final class AppModel {
                                naming: naming, pipelines: RenderPipeline.appleSilicon)
         alert = startupProblem
         reload()
+        // Demonstration launch: import a folder straight away and open the first clip.
+        if let demoMedia = ProcessInfo.processInfo.environment["STADAMAM_DEMO_MEDIA"] {
+            opensFirstClip = true
+            importMedia(at: [demoMedia])
+        }
     }
+
+    private var opensFirstClip = false
 
     // MARK: Derived state
 
@@ -134,6 +141,7 @@ final class AppModel {
                 })
             }
             refreshSearch()
+            if opensFirstClip, selectedID == nil { selectedID = assets.last?.id }
             revision += 1
         } catch {
             alert = error.localizedDescription

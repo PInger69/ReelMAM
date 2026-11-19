@@ -12,6 +12,7 @@ struct StadaMAMApp: App {
                 .preferredColorScheme(.dark)
                 .frame(minWidth: 1180, minHeight: 720)
         }
+        .defaultSize(width: 1560, height: 940)
         .commands {
             CommandGroup(after: .newItem) {
                 Menu("Generate Missing Proxies") {

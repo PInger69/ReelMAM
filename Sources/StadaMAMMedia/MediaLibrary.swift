@@ -125,6 +125,21 @@ public struct MediaLibrary: Sendable {
 
     // MARK: Missing originals
 
+    /// Gives a fingerprint to every reachable original that does not have one yet — clips
+    /// catalogued before fingerprints existed, or while their volume was slow to respond —
+    /// so they can still be found after a later move. Returns how many were added.
+    @discardableResult
+    public func backfillFingerprints() throws -> Int {
+        var added = 0
+        for var asset in try catalog.allAssets() where asset.fingerprint == nil {
+            guard let fingerprint = SourceFingerprint.compute(path: asset.sourcePath) else { continue }
+            asset.fingerprint = fingerprint
+            try catalog.save(asset)
+            added += 1
+        }
+        return added
+    }
+
     /// Clips whose original file is not where the catalog says it is.
     public func offlineAssets() throws -> [Asset] {
         try catalog.allAssets().filter { !FileManager.default.fileExists(atPath: $0.sourcePath) }
@@ -168,7 +183,10 @@ public struct MediaLibrary: Sendable {
         }
         var found: [Asset] = []
         var claimed = Set<String>()
-        for file in Self.mediaFiles(at: folder) {
+        // A file that already belongs to another clip (an identical copy imported separately)
+        // is not a candidate: matching it would hand the wrong clip's identity over.
+        let owned = Set(try catalog.allAssets().map(\.sourcePath))
+        for file in Self.mediaFiles(at: folder) where !owned.contains(file) {
             let size = ((try? FileManager.default.attributesOfItem(atPath: file))?[.size] as? NSNumber)?.int64Value ?? -1
             // Only files of exactly the right size are worth hashing.
             guard let candidates = bySize[size], let fingerprint = SourceFingerprint.compute(path: file),

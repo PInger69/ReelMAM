@@ -217,6 +217,38 @@ struct MediaLibraryTests {
         #expect(try library.catalog.allAssets().count == 2)
     }
 
+    @Test func identicalCopiesKeepTheirOwnIdentityWhenOneMoves() async throws {
+        let library = try makeLibrary()
+        let first = try makeSource("D001_C001.mov")
+        let second = root + "/Volumes/RAID/Day 1/D001_C001 copy.mov"
+        try FileManager.default.copyItem(atPath: first, toPath: second)
+        let a = try await library.importFile(at: first)
+        let b = try await library.importFile(at: second)
+        #expect(a.id != b.id)
+        // One copy moves into a folder elsewhere; the search covers both copies.
+        let moved = root + "/Volumes/RAID/Moved"
+        try FileManager.default.createDirectory(atPath: moved, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(atPath: second, toPath: moved + "/renamed.mov")
+        let found = try library.locateMissingSources(under: root + "/Volumes/RAID")
+        #expect(found.map(\.id) == [b.id])
+        #expect(try library.catalog.asset(id: a.id)?.sourcePath == first)
+        #expect(try library.catalog.asset(id: b.id)?.sourcePath == moved + "/renamed.mov")
+        #expect(try library.offlineAssets().isEmpty)
+    }
+
+    @Test func clipsCataloguedWithoutAFingerprintGetOne() async throws {
+        let library = try makeLibrary()
+        var asset = try await library.importFile(at: try makeSource("K001_C001.mov"))
+        asset.fingerprint = nil
+        try library.catalog.save(asset)
+        var gone = Asset(sourcePath: root + "/Volumes/RAID/not-here.mov")
+        gone = try library.catalog.save(gone)
+        #expect(try library.backfillFingerprints() == 1)
+        #expect(try library.catalog.asset(id: asset.id)?.fingerprint != nil)
+        #expect(try library.catalog.asset(id: gone.id)?.fingerprint == nil)
+        #expect(try library.backfillFingerprints() == 0)
+    }
+
     @Test func shareMountedUnderAnotherNameIsPickedUp() async throws {
         let library = try makeLibrary()
         let volumes = root + "/Volumes"

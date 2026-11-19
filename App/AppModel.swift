@@ -144,6 +144,10 @@ final class AppModel {
         // Shares that were remounted under another name are picked up now and whenever a volume appears.
         _ = try? library?.remapRemountedVolumes()
         reload()
+        // Clips catalogued before fingerprints existed get one now, off the main thread.
+        if let library {
+            Task.detached(priority: .utility) { _ = try? library.backfillFingerprints() }
+        }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didMountNotification, object: nil, queue: .main
         ) { [weak self] _ in

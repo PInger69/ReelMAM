@@ -49,6 +49,25 @@ import StadaMAMCore
         }
     }
 
+    @Test func offloadPlanKeepsEachCardsLayout() {
+        let plan = OffloadPlan(sources: ["/Volumes/CARD_A/", "/Volumes/CARD_B"], destination: "/Volumes/RAID/Day 1/")
+        #expect(plan.destinationPath(for: "/Volumes/CARD_A/CLIPS/A001.mov") == "/Volumes/RAID/Day 1/CARD_A/CLIPS/A001.mov")
+        #expect(plan.destinationPath(for: "/Volumes/CARD_B/A001.mov") == "/Volumes/RAID/Day 1/CARD_B/A001.mov")
+        #expect(plan.destinationPath(for: "/Volumes/OTHER/A001.mov") == nil)
+        #expect(plan.sourcePath(forCopy: "/Volumes/RAID/Day 1/CARD_A/CLIPS/A001.mov") == "/Volumes/CARD_A/CLIPS/A001.mov")
+        #expect(plan.sourcePath(forCopy: "/Volumes/RAID/Day 2/CARD_A/A001.mov") == nil)
+        #expect(plan.problem == nil)
+        #expect(OffloadPlan(sources: ["/Volumes/CARD"], destination: "/Volumes/CARD/Copies").problem != nil)
+        #expect(OffloadPlan(sources: ["/Volumes/RAID/in"], destination: "/Volumes/RAID").problem != nil)
+        #expect(OffloadPlan(sources: ["/Volumes/A/CARD", "/Volumes/B/CARD"], destination: "/Volumes/RAID").problem != nil)
+        #expect(IngestClient.parse(["/Volumes/CARD", "--copy-to", "/Volumes/CARD/x"])
+            == .failure("The copy destination is inside /Volumes/CARD, which is being watched."))
+        guard case .run(let options) = IngestClient.parse(["/Volumes/CARD", "--copy-to", "/Volumes/RAID/"]) else {
+            Issue.record("should run"); return
+        }
+        #expect(options.copyDestination == "/Volumes/RAID")
+    }
+
     @Test func summaryReadsPlainly() {
         var summary = IngestClient.Summary()
         summary.ingested = 1
@@ -127,6 +146,87 @@ struct IngestClientRunTests {
         let third = try await IngestClient.runOnce(options, tools: tools) { lines.add($0) }
         #expect(third.ingested == 1 && third.failures.isEmpty, "\(third)")
         #expect(try Catalog(path: root + "/Library/Catalog.sqlite").allAssets().count == 4)
+    }
+
+    /// The offload: clips are copied off the card and checked, the catalogue points at the
+    /// copies, and wiping the card afterwards loses nothing.
+    @Test func aCardIsCopiedVerifiedAndCataloguedFromItsCopy() async throws {
+        let clips = root + "/CARD/PRIVATE/CLIPS"
+        try await makeClip("A001_C001.mov", timecode: "01:00:00:00")
+        try await makeClip("A001_C002.mov", timecode: "01:00:10:00")
+        _ = FileManager.default.createFile(atPath: clips + "/A001_C001.sidecar", contents: Data("grade".utf8))
+        _ = FileManager.default.createFile(atPath: root + "/CARD/PRIVATE/notes.txt", contents: Data("not media".utf8))
+
+        var options = IngestClient.Options()
+        options.folders = [root + "/CARD"]
+        options.libraryFolder = root + "/Library"
+        options.copyDestination = root + "/Storage"
+        options.presets = [.h264_720]
+        options.once = true
+        options.quiet = true
+        let first = try await IngestClient.runOnce(options, tools: tools) { _ in }
+        #expect(first == IngestClient.Summary(ingested: 2, skipped: 0, failures: []), "\(first)")
+
+        // The copies are identical to the card, with the sidecar, in the card's own layout.
+        let fm = FileManager.default
+        let copies = root + "/Storage/CARD/PRIVATE/CLIPS"
+        for name in ["A001_C001.mov", "A001_C002.mov", "A001_C001.sidecar"] {
+            #expect(fm.contentsEqual(atPath: clips + "/" + name, andPath: copies + "/" + name), "\(name)")
+        }
+        #expect(!fm.fileExists(atPath: root + "/Storage/CARD/PRIVATE/notes.txt"))
+        let list = try String(contentsOfFile: root + "/Storage/CARD/checksums." + SequencePackageExporter.checksumAlgorithm, encoding: .utf8)
+        #expect(list.split(separator: "\n").count == 3)
+        #expect(list.contains("  PRIVATE/CLIPS/A001_C001.mov\n"))
+        let line = try #require(list.split(separator: "\n").first { $0.hasSuffix("A001_C002.mov") })
+        let listed = String(line.prefix { $0 != " " })
+        let independent = try SequencePackageExporter.checksum(ofFileAt: clips + "/A001_C002.mov")
+        #expect(listed == independent)
+
+        // The catalogue knows the copies, not the card, and the proxies are of the copies.
+        let catalog = try Catalog(path: root + "/Library/Catalog.sqlite")
+        let assets = try catalog.allAssets()
+        #expect(Set(assets.map(\.sourcePath)) == [copies + "/A001_C001.mov", copies + "/A001_C002.mov"])
+        for asset in assets {
+            let proxy = try #require(try catalog.proxies(forAsset: asset.id).first)
+            #expect(proxy.status == .ready && proxy.mismatch == nil)
+        }
+
+        // A second pass over the same card copies and imports nothing.
+        let dates = try [copies + "/A001_C001.mov", copies + "/A001_C002.mov"].map {
+            try fm.attributesOfItem(atPath: $0)[.modificationDate] as? Date
+        }
+        let second = try await IngestClient.runOnce(options, tools: tools) { _ in }
+        #expect(second == IngestClient.Summary(), "\(second)")
+        #expect(try Catalog(path: root + "/Library/Catalog.sqlite").allAssets().count == 2)
+        #expect(try [copies + "/A001_C001.mov", copies + "/A001_C002.mov"].map {
+            try fm.attributesOfItem(atPath: $0)[.modificationDate] as? Date
+        } == dates)
+
+        // The card is wiped: every clip is still there, from its copy.
+        try fm.removeItem(atPath: root + "/CARD")
+        #expect(try catalog.allAssets().allSatisfy { fm.fileExists(atPath: $0.sourcePath) })
+    }
+
+    /// A copy left behind by an interrupted run is checked, not trusted and not redone needlessly.
+    @Test func anInterruptedCopyIsFinishedProperly() async throws {
+        try await makeClip("B001_C001.mov", timecode: "02:00:00:00")
+        let fm = FileManager.default
+        let copy = root + "/Storage/CARD/PRIVATE/CLIPS/B001_C001.mov"
+        try fm.createDirectory(atPath: (copy as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        // Half a file, as a power cut would leave.
+        let whole = try Data(contentsOf: URL(fileURLWithPath: root + "/CARD/PRIVATE/CLIPS/B001_C001.mov"))
+        try whole.prefix(whole.count / 2).write(to: URL(fileURLWithPath: copy))
+
+        var options = IngestClient.Options()
+        options.folders = [root + "/CARD"]
+        options.libraryFolder = root + "/Library"
+        options.copyDestination = root + "/Storage"
+        options.presets = []
+        options.once = true
+        options.quiet = true
+        let summary = try await IngestClient.runOnce(options, tools: tools) { _ in }
+        #expect(summary.ingested == 1 && summary.failures.isEmpty, "\(summary)")
+        #expect(try Data(contentsOf: URL(fileURLWithPath: copy)) == whole)
     }
 
     @Test func aMissingFolderIsRefusedBeforeAnythingIsWritten() async throws {

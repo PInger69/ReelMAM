@@ -27,7 +27,7 @@ said and shown in it.
 | More on-device A.I.: names of people, places and organisations in the speech, sound classification, animals, and how many people are in frame | Built; runs in the macOS tests on synthetic clips, not yet judged on real footage |
 | External A.I. hooks: a service of your choice receives each clip's transcript and tags (never the media) and can return a summary and extra tags | Built; request and reply handling tested, not yet run against a live service |
 | Subclip export: a marked range copied out of the original as its own file, without re-encoding, with its timecode moved on to match | Built; checked on the macOS build with ProRes, not yet tried by hand |
-| Ingest client (`stradaxr-ingest`): headless watch-folder ingest and proxy rendering into a library the app reads, as a single pass or continuously | Built; tested end to end on Linux and in the macOS tests, not yet run on a real ingest station |
+| Ingest client (`stradaxr-ingest`): headless copy, ingest and proxy rendering. Optionally offloads each clip off the card with a checksum-verified copy, then catalogues it and renders proxies into a library the app reads, as a single pass or continuously | Built; tested end to end on Linux and in the macOS tests, not yet run on a real card or ingest station |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
 | Cuts editor: named sequences of cuts, played through from proxies; export as a timeline (FCPXML, Premiere XML, EDL) linked to the camera originals, or as a package with the originals copied and checked; a Rec.709 viewing look for log footage and `.cube` LUTs. See `docs/cuts-editor.md` | Model, exports, package, playback and look built and tested; the editor screen compiles but has not been run by hand; nothing imported into an editing app or tried on camera footage yet |
 | Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |
@@ -90,6 +90,16 @@ separate machine, point both at one folder on shared storage:
 
 ```bash
 stradaxr-ingest --library /Volumes/SAN/StradaXR --preset prores-half --preset remote-hevc /Volumes/CARD_A
+```
+
+Add `--copy-to` to offload first. Each clip is copied off the card, the copy is read back and
+its checksum compared with the card, files that belong with it (`.sidecar`, `.RMD`, `.xmp`,
+`.cdl`) go too, and the catalogue points at the copy, so the card can be wiped afterwards. Each
+card keeps its own folder and layout under the destination, with a `checksums` list of every
+verified file. Only clips and their sidecars are copied, not the rest of the card.
+
+```bash
+stradaxr-ingest --copy-to "/Volumes/RAID/Day 1" /Volumes/CARD_A /Volumes/CARD_B
 ```
 
 `--once` ingests what is there now and exits, for scripts. `stradaxr-ingest --help` lists every

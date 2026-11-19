@@ -14,6 +14,8 @@ public enum IngestClient {
         /// Folder holding `Catalog.sqlite`, `Proxies` and `Thumbnails`. Nil means the MAM app's
         /// own library on this Mac.
         public var libraryFolder: String?
+        /// Copy each clip here first, verify the copy, and ingest the copy instead of the card.
+        public var copyDestination: String?
         public var presets: [ProxyPreset] = [.proResProxyHalf]
         public var naming: ProxyNaming = .sameName
         /// Ingest what is there now, then exit, instead of watching.
@@ -51,6 +53,8 @@ public enum IngestClient {
         OPTIONS
           --library <folder>   Library to write into (Catalog.sqlite, Proxies, Thumbnails).
                                Default: the MAM app's own library on this Mac.
+          --copy-to <folder>   Offload first: copy each clip here, check the copy against the
+                               card, and catalogue the copy, so the card can be wiped.
           --preset <name>      Proxy to render; repeat for several. One of:
                                prores-half (default), prores-1080, h264-1080, h264-720, remote-hevc
           --no-proxies         Catalogue only.
@@ -91,6 +95,9 @@ public enum IngestClient {
             case "--library":
                 guard let folder = value(for: argument) else { return .failure("--library needs a folder.") }
                 options.libraryFolder = (folder as NSString).standardizingPath
+            case "--copy-to":
+                guard let folder = value(for: argument) else { return .failure("--copy-to needs a folder.") }
+                options.copyDestination = (folder as NSString).standardizingPath
             case "--preset":
                 guard let name = value(for: argument),
                       let preset = presetNames.first(where: { $0.name == name })?.preset else {
@@ -129,6 +136,10 @@ public enum IngestClient {
         if noProxies, !presets.isEmpty { return .failure("--no-proxies cannot be combined with --preset.") }
         options.presets = noProxies ? [] : (presets.isEmpty ? [.proResProxyHalf] : presets)
         guard !options.folders.isEmpty else { return .failure("Give at least one folder to ingest from.") }
+        if let destination = options.copyDestination,
+           let problem = OffloadPlan(sources: options.folders, destination: destination).problem {
+            return .failure(problem)
+        }
         return .run(options)
     }
 
@@ -225,7 +236,15 @@ public enum IngestClient {
                                    naming: options.naming, pipelines: RenderPipeline.appleSilicon)
         let parallel = options.parallel ?? MediaLibrary.recommendedConcurrentRenders
         let presets = options.presets
-        let worker = LibraryIngestWorker(library: library, limiter: JobLimiter(limit: parallel), presets: { presets })
+        let libraryWorker = LibraryIngestWorker(library: library, limiter: JobLimiter(limit: parallel), presets: { presets })
+        let worker: IngestWorker
+        if let destination = options.copyDestination {
+            try fm.createDirectory(atPath: destination, withIntermediateDirectories: true)
+            worker = OffloadingIngestWorker(base: libraryWorker,
+                                            plan: OffloadPlan(sources: options.folders, destination: destination))
+        } else {
+            worker = libraryWorker
+        }
 
         var settings = IngestEngine.Settings()
         settings.stabilitySeconds = options.stabilitySeconds ?? (options.once ? 0 : 30)

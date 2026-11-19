@@ -133,24 +133,30 @@ xattr -dr com.apple.quarantine /Applications/StadaMAM.app
 
 ## Building
 
-Requires an Apple Silicon Mac with macOS 14+ and Xcode 16+, and XcodeGen to create the Xcode project:
+Requires an Apple Silicon Mac with macOS 14+ and Xcode 16+.
+
+The Xcode project is in the repository, so there is nothing to generate: open
+`StadaMAM.xcodeproj` and press Run. Two schemes are offered: **StadaMAM** (the app) and
+**stradaxr-ingest** (the ingest client).
+
+To start from nothing in Xcode: on its welcome window choose **Clone Git Repository…**, paste
+`https://github.com/PInger69/ReelMAM.git`, sign in to GitHub when asked, then open
+`StadaMAM.xcodeproj` in the folder it clones.
+
+The project file is generated from `project.yml`, and the build on GitHub regenerates and
+commits it on `main` whenever it changes. After editing `project.yml` yourself, or adding a
+source file to the app, regenerate it locally with XcodeGen:
 
 ```bash
 brew install xcodegen
 ```
 
-FFmpeg is optional. Install it (`brew install ffmpeg`) only if you need formats Apple's
-frameworks cannot open, such as MXF or MKV, and to run the full test suite.
-
-Generate the Xcode project and open it:
-
 ```bash
 xcodegen generate
 ```
 
-```bash
-open StadaMAM.xcodeproj
-```
+FFmpeg is optional. Install it (`brew install ffmpeg`) only if you need formats Apple's
+frameworks cannot open, such as MXF or MKV, and to run the full test suite.
 
 Run the tests (the media tests skip themselves when FFmpeg is not installed):
 

@@ -108,6 +108,20 @@ jobs:
             exit 1
           fi
           tail -n 3 build.log
+      - name: Keep the committed Xcode project current
+        # The project file is generated from project.yml. Committing the generated copy on main
+        # means the repository opens in Xcode with a double-click, with nothing to install.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        continue-on-error: true
+        run: |
+          git add StadaMAM.xcodeproj App/Info.plist
+          if git diff --cached --quiet; then
+            echo "The committed Xcode project is already current."
+            exit 0
+          fi
+          git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" \
+            commit -q -m "Update the generated Xcode project"
+          git push origin HEAD:main
       - name: Package the app for download
         run: |
           if ! xcodebuild -project StadaMAM.xcodeproj -scheme StadaMAM -configuration Release \

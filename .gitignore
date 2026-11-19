@@ -1,0 +1,9 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+*.xcodeproj
+xcuserdata/
+*.xcuserstate
+# Blackmagic RAW SDK is licensed separately and must not be committed
+Vendor/BlackmagicRAW/

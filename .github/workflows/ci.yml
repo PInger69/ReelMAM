@@ -63,6 +63,17 @@ jobs:
               if ! swift test --skip-build --filter "^${suite}/" > suite.log 2>&1; then
                 echo "=== $suite"
                 grep -E "✘|error:|signal|Fatal|started\\.$" suite.log | tail -n 25
+                # And each of its tests alone.
+                swift test list --skip-build 2>/dev/null | grep -F "${suite}/" > cases.txt || true
+                while read -r case; do
+                  name="${case%%(*}"
+                  if swift test --skip-build --filter "^${name}\\(" > case.log 2>&1; then
+                    echo "    alone: passes  $case"
+                  else
+                    echo "    alone: FAILS   $case"
+                    grep -E "✘|error:|signal" case.log | tail -n 6
+                  fi
+                done < cases.txt
               fi
             done < suites.txt
             sleep 20

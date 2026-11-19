@@ -142,14 +142,9 @@ struct SequencePlaybackAndLookTests {
         let reader = try AVAssetReader(asset: asset)
         reader.timeRange = CMTimeRange(start: CMTime(seconds: seconds, preferredTimescale: 600), duration: CMTime(value: 1, timescale: 4))
         let settings: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        // A composition is asked for its tracks directly: the asynchronous loader, called on a
-        // mutable composition through the AVAsset type, crashed the test process on the macOS runner.
-        let tracks: [AVAssetTrack]
-        if let composition = asset as? AVComposition {
-            tracks = composition.tracks(withMediaType: .video)
-        } else {
-            tracks = try await asset.loadTracks(withMediaType: .video)
-        }
+        // Asked for through the loader that listens once: this runs after a video composition
+        // has been built for the same asset, when AVFoundation can answer a track request twice.
+        let tracks = try await asset.loadTracksOnce(withMediaType: .video)
         let output: AVAssetReaderOutput
         if let composition {
             let composed = AVAssetReaderVideoCompositionOutput(videoTracks: tracks, videoSettings: settings)

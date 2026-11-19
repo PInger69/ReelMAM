@@ -89,7 +89,7 @@ public enum ViewingLookRenderer {
     /// footage ("com.apple.rec2020.apple-log", "com.apple.apple-wide-gamut.apple-log").
     public static func colorDescription(path: String) async -> String? {
         let asset = AVURLAsset(url: URL(fileURLWithPath: path))
-        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+        guard let track = try? await asset.loadTracksOnce(withMediaType: .video).first,
               let format = try? await track.load(.formatDescriptions).first else { return nil }
         return colorDescription(of: format)
     }

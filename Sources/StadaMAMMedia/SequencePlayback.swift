@@ -54,7 +54,7 @@ public struct SequencePlayback: @unchecked Sendable {
             if let path = mediaPath(asset) {
                 let source = sources[path] ?? AVURLAsset(url: URL(fileURLWithPath: path))
                 sources[path] = source
-                if let picture = try await source.loadTracks(withMediaType: .video).first {
+                if let picture = try await source.loadTracksOnce(withMediaType: .video).first {
                     // Never ask for more than the file holds.
                     let available = try await picture.load(.timeRange)
                     let wanted = CMTimeRange(start: start, duration: length).intersection(available)
@@ -65,7 +65,7 @@ public struct SequencePlayback: @unchecked Sendable {
                         try videoTrack?.insertTimeRange(wanted, of: picture, at: cursor)
                         length = wanted.duration
                         hasPicture = true
-                        for (index, sound) in try await source.loadTracks(withMediaType: .audio).enumerated() {
+                        for (index, sound) in try await source.loadTracksOnce(withMediaType: .audio).enumerated() {
                             while audioTracks.count <= index {
                                 guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
                                 else { break }

@@ -62,6 +62,25 @@ jobs:
             exit 1
           fi
           tail -n 3 build.log
+      - name: Package the app for download
+        run: |
+          if ! xcodebuild -project StadaMAM.xcodeproj -scheme StadaMAM -configuration Release \
+              -destination 'platform=macOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build > release.log 2>&1; then
+            grep -E "error:|error |BUILD FAILED" release.log | sort -u | head -100
+            exit 1
+          fi
+          APP=build/Build/Products/Release/StadaMAM.app
+          # Ad-hoc signature: enough to run on an Apple Silicon Mac, not a Developer ID signature.
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep "$APP"
+          mkdir -p dist
+          ditto -c -k --keepParent "$APP" dist/StadaXR-AI-MAM.zip
+          ls -la dist
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
+        with:
+          name: StadaXR-AI-MAM
+          path: dist
       - name: Launch the app with sample clips and take screenshots
         continue-on-error: true
         timeout-minutes: 6

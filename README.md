@@ -78,6 +78,17 @@ sources, ready for online / conform.
 - `App` — the SwiftUI macOS app.
 - `Tests` — unit tests plus end-to-end tests that run real FFmpeg.
 
+## Running a build without Xcode
+
+Every build on GitHub packages the app. On the repository's **Actions** tab, open the latest
+successful run and download the **StadaXR-AI-MAM** artifact. Unzip it twice to get
+`StadaMAM.app`, move it to Applications, then clear the download quarantine once, because the
+build is not signed with an Apple Developer ID:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/StadaMAM.app
+```
+
 ## Building
 
 Requires an Apple Silicon Mac with macOS 14+ and Xcode 16+, and XcodeGen to create the Xcode project:

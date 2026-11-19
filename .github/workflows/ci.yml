@@ -26,6 +26,8 @@ jobs:
     name: App build (macOS)
     runs-on: macos-15
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen and FFmpeg
@@ -88,3 +90,15 @@ jobs:
           name: screenshots
           path: shots
           if-no-files-found: ignore
+      - name: Publish screenshots to the ci-screenshots branch
+        if: always()
+        continue-on-error: true
+        run: |
+          [ -f shots/app.png ] || exit 0
+          cd shots
+          git init -q -b ci-screenshots
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add app.png
+          git commit -q -m "Screenshot from ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" ci-screenshots

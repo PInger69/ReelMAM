@@ -155,7 +155,16 @@ struct SequencePlaybackAndLookTests {
         }
         reader.add(output)
         #expect(reader.startReading())
-        let sample = try #require(output.copyNextSampleBuffer(), "no frame: \(String(describing: reader.error))")
+        // The read blocks until the frame has been through the look, and the look is applied on
+        // Swift's own thread pool. Waiting here on one of that pool's threads stalled the whole
+        // run once every thread was waiting, so the wait happens on a thread of its own.
+        nonisolated(unsafe) let reading = output
+        let next: CMSampleBuffer? = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: reading.copyNextSampleBuffer())
+            }
+        }
+        let sample = try #require(next, "no frame: \(String(describing: reader.error))")
         let buffer = try #require(CMSampleBufferGetImageBuffer(sample))
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }

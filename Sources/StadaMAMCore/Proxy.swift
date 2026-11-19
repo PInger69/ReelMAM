@@ -87,6 +87,9 @@ public enum ProxyMetadataKey {
 
 /// Where the work of rendering a proxy happens. Listed fastest first.
 public enum RenderPipeline: String, Codable, CaseIterable, Sendable {
+    /// Apple's own frameworks inside the app: AVFoundation reads, VideoToolbox decodes, scales
+    /// and encodes on the Apple Silicon media engine. No external tools involved.
+    case native
     /// Apple Silicon media engine end to end: hardware decode, scaling on the GPU and hardware
     /// encode, with frames never leaving video memory.
     case videoToolboxGPU
@@ -97,14 +100,19 @@ public enum RenderPipeline: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .videoToolboxGPU: return "Apple media engine (GPU)"
-        case .videoToolbox: return "Apple media engine"
-        case .software: return "Software"
+        case .native: return "Apple VideoToolbox (native)"
+        case .videoToolboxGPU: return "FFmpeg on the media engine (GPU)"
+        case .videoToolbox: return "FFmpeg on the media engine"
+        case .software: return "FFmpeg software"
         }
     }
 
     /// Preference order on a Mac: try the fastest path, fall back when a format needs it.
-    public static let appleSilicon: [RenderPipeline] = [.videoToolboxGPU, .videoToolbox, .software]
+    /// The native pipeline handles everything Apple's frameworks can open; the FFmpeg ones
+    /// are only reached for other formats, and only when FFmpeg is installed.
+    public static let appleSilicon: [RenderPipeline] = [.native, .videoToolboxGPU, .videoToolbox, .software]
+
+    public var usesFFmpeg: Bool { self != .native }
 }
 
 /// Builds the FFmpeg invocation that renders a proxy.
@@ -121,8 +129,15 @@ public struct ProxyRenderPlan: Sendable {
         self.pipeline = pipeline
     }
 
-    /// The GPU pipeline cannot deinterlace, so interlaced sources skip it.
-    public var isApplicable: Bool { pipeline != .videoToolboxGPU || !asset.scan.isInterlaced }
+    /// The native pipeline needs a format Apple's frameworks decode; it and the GPU pipeline
+    /// cannot deinterlace, so interlaced sources skip both.
+    public var isApplicable: Bool {
+        switch pipeline {
+        case .native: return asset.decodePath == .avFoundation && !asset.scan.isInterlaced
+        case .videoToolboxGPU: return !asset.scan.isInterlaced
+        case .videoToolbox, .software: return true
+        }
+    }
 
     public var outputHeight: Int { preset.height(forSourceHeight: asset.height) }
 
@@ -142,7 +157,7 @@ public struct ProxyRenderPlan: Sendable {
             args += ["-hwaccel", "videotoolbox", "-hwaccel_output_format", "videotoolbox_vld"]
         case .videoToolbox:
             args += ["-hwaccel", "videotoolbox"]
-        case .software:
+        case .software, .native:
             break
         }
         args += ["-i", asset.sourcePath, "-map", "0:v:0", "-map", "0:a?", "-map_metadata", "0"]
@@ -155,14 +170,14 @@ public struct ProxyRenderPlan: Sendable {
             args += ["-vf", (asset.scan.isInterlaced ? "bwdif=mode=send_frame," : "") + "scale=-2:\(height)"]
         }
 
-        let hardware = pipeline != .software
+        let hardware = pipeline == .videoToolboxGPU || pipeline == .videoToolbox
         // Software pixel formats only apply when frames are in system memory.
         let cpuFrames = pipeline != .videoToolboxGPU
         if preset.isProRes {
             args += hardware
                 ? ["-c:v", "prores_videotoolbox", "-profile:v", "proxy"]
                 : ["-c:v", "prores_ks", "-profile:v", "0"]
-            if pipeline == .software { args += ["-pix_fmt", "yuv422p10le"] }
+            if !hardware { args += ["-pix_fmt", "yuv422p10le"] }
             args += ["-c:a", "pcm_s16le"]
         } else {
             args += hardware

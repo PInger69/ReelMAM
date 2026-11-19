@@ -32,6 +32,17 @@ public struct FrameRate: Codable, Hashable, Sendable {
         }
     }
 
+    /// Reduces a ratio to its simplest form and snaps near-NTSC values to their exact rate,
+    /// so 2400/100 becomes 24 and 2997/100 becomes 30000/1001. Other rates are kept exactly.
+    public static func normalized(_ numerator: Int, _ denominator: Int) -> FrameRate {
+        guard numerator > 0, denominator > 0 else { return .fps24 }
+        func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
+        let divisor = gcd(numerator, denominator)
+        let reduced = FrameRate(numerator / divisor, denominator / divisor)
+        let snapped = FrameRate(fps: reduced.fps)
+        return abs(snapped.fps - reduced.fps) < 0.0005 ? snapped : reduced
+    }
+
     public static let fps23_976 = FrameRate(24000, 1001)
     public static let fps24 = FrameRate(24)
     public static let fps25 = FrameRate(25)

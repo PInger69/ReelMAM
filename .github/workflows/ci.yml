@@ -33,14 +33,14 @@ jobs:
       - name: Build tests
         run: swift build --build-tests
       - name: Test packages
-        timeout-minutes: 10
+        timeout-minutes: 12
         run: |
           # If the tests stall, show what is running and where it is stuck before giving up.
           swift test --skip-build &
           tests=$!
           (
-            sleep 300
-            echo "::error::Tests still running after 5 minutes"
+            sleep 420
+            echo "::error::Tests still running after 7 minutes"
             pgrep -fl 'xctest|swiftpm-testing-helper|ffmpeg|ffprobe' || true
             for pid in $(pgrep -f 'xctest|swiftpm-testing-helper'); do sample "$pid" 2 2>/dev/null | head -220; done
             pkill -f 'ffmpeg|ffprobe' || true

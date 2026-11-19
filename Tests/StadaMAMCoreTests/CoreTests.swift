@@ -342,6 +342,10 @@ func found(_ resolution: SourceResolution) -> Found { Found(resolution.asset?.id
         let dropCapable = rates.filter(\.supportsDropFrame)
         #expect(dropCapable == [.fps29_97, .fps59_94, FrameRate(120000, 1001)])
         #expect(FrameRate(fps: 119.88) == FrameRate(120000, 1001))
+        #expect(FrameRate.normalized(2400, 100) == .fps24)
+        #expect(FrameRate.normalized(2997, 100) == .fps29_97)
+        #expect(FrameRate.normalized(24000, 1001) == .fps23_976)
+        #expect(FrameRate.normalized(25, 2) == FrameRate(25, 2))
     }
 
     @Test func atsc1TableIsComplete() {

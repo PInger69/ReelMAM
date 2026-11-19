@@ -49,51 +49,66 @@ public struct FFmpegTools: Sendable {
         return nil
     }
 
-    /// Runs a tool to completion. `onOutputLine` receives stdout line by line while it runs.
+    /// Runs a tool to completion and returns what it wrote to standard output.
+    /// `onOutputLine` instead receives standard output line by line while the tool runs.
+    ///
+    /// Output is captured in temporary files rather than read to end-of-file from pipes.
+    /// Waiting for a pipe's end-of-file can block for ever when another process launched at
+    /// the same moment inherits the pipe, which is what stalled concurrent runs on macOS.
     @discardableResult
     func run(_ executable: String, _ arguments: [String],
              onOutputLine: (@Sendable (String) -> Void)? = nil) throws -> Data {
+        let fm = FileManager.default
+        let base = NSTemporaryDirectory() + "stadamam-run-" + UUID().uuidString
+        let outputPath = base + ".out", errorPath = base + ".err"
+        defer {
+            try? fm.removeItem(atPath: outputPath)
+            try? fm.removeItem(atPath: errorPath)
+        }
+        _ = fm.createFile(atPath: outputPath, contents: nil)
+        _ = fm.createFile(atPath: errorPath, contents: nil)
+        guard let errorFile = FileHandle(forWritingAtPath: errorPath),
+              let outputFile = FileHandle(forWritingAtPath: outputPath) else {
+            throw MediaError.ffmpegFailed("could not create temporary files")
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        let stdout = Pipe(), stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
         process.standardInput = FileHandle.nullDevice
-        // Wait on the termination handler rather than waitUntilExit(), which spins a run loop
-        // and can hang when called from a thread that has none.
+        process.standardError = errorFile
+        var linePipe: Pipe?
+        if let onOutputLine {
+            let pipe = Pipe()
+            let lines = LineBuffer(onOutputLine)
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if chunk.isEmpty {
+                    handle.readabilityHandler = nil
+                } else {
+                    lines.append(chunk)
+                }
+            }
+            process.standardOutput = pipe
+            linePipe = pipe
+        } else {
+            process.standardOutput = outputFile
+        }
+        // Wait on the termination handler rather than waitUntilExit(), which spins a run loop.
         let exited = DispatchSemaphore(value: 0)
         process.terminationHandler = { _ in exited.signal() }
         try process.run()
-
-        // Drain both pipes on their own threads so a chatty tool can never block on a full pipe.
-        let drained = DispatchGroup()
-        let output = DataBox(), errors = DataBox()
-        DispatchQueue.global().async(group: drained) {
-            errors.data = stderr.fileHandleForReading.readDataToEndOfFile()
-        }
-        DispatchQueue.global().async(group: drained) {
-            var pending = Data()
-            while true {
-                let chunk = stdout.fileHandleForReading.availableData
-                if chunk.isEmpty { break }
-                output.data.append(chunk)
-                guard let onOutputLine else { continue }
-                pending.append(chunk)
-                while let newline = pending.firstIndex(of: 0x0A) {
-                    onOutputLine(String(decoding: pending[pending.startIndex..<newline], as: UTF8.self))
-                    pending.removeSubrange(pending.startIndex...newline)
-                }
-            }
-        }
         exited.wait()
-        drained.wait()
+        linePipe?.fileHandleForReading.readabilityHandler = nil
+        try? errorFile.close()
+        try? outputFile.close()
+
         guard process.terminationStatus == 0 else {
-            let message = String(decoding: errors.data, as: UTF8.self)
+            let message = String(decoding: fm.contents(atPath: errorPath) ?? Data(), as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw MediaError.ffmpegFailed(message.isEmpty ? "exit code \(process.terminationStatus)" : message)
         }
-        return output.data
+        return fm.contents(atPath: outputPath) ?? Data()
     }
 
     public func probe(path: String) throws -> FFProbeResult {
@@ -145,6 +160,25 @@ public struct FFmpegTools: Sendable {
     }
 }
 
-private final class DataBox: @unchecked Sendable {
-    var data = Data()
+/// Splits a stream of bytes into lines for a callback. Safe to feed from any thread.
+private final class LineBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending = Data()
+    private let onLine: @Sendable (String) -> Void
+
+    init(_ onLine: @escaping @Sendable (String) -> Void) {
+        self.onLine = onLine
+    }
+
+    func append(_ chunk: Data) {
+        lock.lock()
+        pending.append(chunk)
+        var lines: [String] = []
+        while let newline = pending.firstIndex(of: 0x0A) {
+            lines.append(String(decoding: pending[pending.startIndex..<newline], as: UTF8.self))
+            pending.removeSubrange(pending.startIndex...newline)
+        }
+        lock.unlock()
+        lines.forEach(onLine)
+    }
 }

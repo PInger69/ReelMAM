@@ -2,10 +2,14 @@ import Foundation
 import StadaMAMCore
 
 /// Ingest, proxy generation and source recall — the operations the app drives.
-/// All methods block; call them off the main thread.
+///
+/// On a Mac everything Apple's frameworks can open goes through `NativeMedia`. FFmpeg is
+/// optional: when it is installed it handles the remaining formats, and when it is not,
+/// those formats are still catalogued.
 public struct MediaLibrary: Sendable {
     public let catalog: Catalog
-    public let tools: FFmpegTools
+    /// Present only when FFmpeg is installed.
+    public let tools: FFmpegTools?
     /// Folder that holds generated proxies and thumbnails.
     public var storageRoot: String
     public var naming: ProxyNaming
@@ -14,7 +18,7 @@ public struct MediaLibrary: Sendable {
     public var pipelines: [RenderPipeline]
     private let pipelineMemory = PipelineMemory()
 
-    public init(catalog: Catalog, tools: FFmpegTools, storageRoot: String,
+    public init(catalog: Catalog, tools: FFmpegTools?, storageRoot: String,
                 naming: ProxyNaming = .sameName, pipelines: [RenderPipeline]) {
         self.catalog = catalog
         self.tools = tools
@@ -36,6 +40,37 @@ public struct MediaLibrary: Sendable {
     public var proxyRoot: String { storageRoot + "/Proxies" }
 
     public func thumbnailDirectory(forAssetID id: String) -> String { storageRoot + "/Thumbnails/" + id }
+
+    // MARK: Probing
+
+    private struct ProbeResult {
+        var asset: Asset?
+        var embeddedAssetID: String?
+        var vendorHint: String?
+    }
+
+    /// Reads a file's technical metadata natively where possible, otherwise through FFmpeg.
+    private func probe(path: String) async -> ProbeResult {
+        #if os(macOS)
+        if NativeMedia.canOpen(path: path), let native = try? await NativeMedia.probe(path: path) {
+            return ProbeResult(asset: native.asset, embeddedAssetID: native.embeddedAssetID)
+        }
+        #endif
+        guard let tools, let probe = try? await Self.offload({ try tools.probe(path: path) }) else {
+            return ProbeResult()
+        }
+        return ProbeResult(asset: probe.asset(path: path), embeddedAssetID: probe.embeddedAssetID,
+                           vendorHint: probe.vendorHint)
+    }
+
+    /// Runs blocking work (an FFmpeg process) off the Swift concurrency thread pool.
+    private static func offload<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result { try work() })
+            }
+        }
+    }
 
     // MARK: Ingest
 
@@ -63,18 +98,18 @@ public struct MediaLibrary: Sendable {
     /// decoded (camera RAW such as Blackmagic RAW, Sony X-OCN, ARRIRAW, REDCODE) is still
     /// identified and catalogued with whatever the container reveals.
     @discardableResult
-    public func importFile(at path: String) throws -> Asset {
+    public func importFile(at path: String) async throws -> Asset {
         let ext = (path as NSString).pathExtension
         let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.int64Value ?? 0
-        let probe = try? tools.probe(path: path)
-        if let id = probe?.embeddedAssetID { throw MediaError.isOwnProxy(assetID: id) }
-        if var asset = probe?.asset(path: path) {
+        let probed = await probe(path: path)
+        if let id = probed.embeddedAssetID { throw MediaError.isOwnProxy(assetID: id) }
+        if var asset = probed.asset {
             if asset.fileSize == 0 { asset.fileSize = size }
             return try catalog.save(asset)
         }
         // The container could not be read at all, or exposes no picture stream.
-        let identity = FormatIdentity.identify(fileExtension: ext, canDecode: false, vendor: probe?.vendorHint)
         guard FormatIdentity.importableExtensions.contains(ext.lowercased()) else { throw MediaError.noVideoStream(path) }
+        let identity = FormatIdentity.identify(fileExtension: ext, canDecode: false, vendor: probed.vendorHint)
         return try catalog.save(Asset(sourcePath: path, fileSize: size, decodePath: identity.decodePath,
                                       container: ext.lowercased(), formatName: identity.name, scan: .unknown))
     }
@@ -84,11 +119,11 @@ public struct MediaLibrary: Sendable {
     /// Renders a proxy that carries the source's timecode, reel name and catalog ID.
     ///
     /// Tries each pipeline in order and falls back when one cannot handle the clip, so a proxy
-    /// is always produced when the format is decodable at all. The record notes which pipeline
-    /// was used and how fast it ran.
+    /// is always produced when the format is decodable at all. The finished file is read back
+    /// and compared with its source; the record notes the pipeline, its speed and any mismatch.
     @discardableResult
     public func makeProxy(for asset: Asset, preset: ProxyPreset,
-                          progress: (@Sendable (Double) -> Void)? = nil) throws -> ProxyRecord {
+                          progress: (@Sendable (Double) -> Void)? = nil) async throws -> ProxyRecord {
         guard asset.decodePath.canRender else { throw MediaError.decoderUnavailable(asset.formatName) }
         let path = naming.proxyPath(for: asset, root: proxyRoot)
         var record = try catalog.proxies(forAsset: asset.id).first { $0.path == path }
@@ -100,17 +135,19 @@ public struct MediaLibrary: Sendable {
         let formatKey = "\(asset.videoCodec ?? "?")|\(asset.container ?? "?")|\(preset.rawValue)"
         let candidates = pipelines
             .map { ProxyRenderPlan(asset: asset, preset: preset, outputPath: path, pipeline: $0) }
-            .filter { $0.isApplicable && !pipelineMemory.hasFailed($0.pipeline, for: formatKey) }
-        var lastError: Error = MediaError.ffmpegFailed("no render pipeline available")
+            .filter { $0.isApplicable && isAvailable($0.pipeline) && !pipelineMemory.hasFailed($0.pipeline, for: formatKey) }
+        var lastError: Error = candidates.isEmpty && tools == nil
+            ? MediaError.ffmpegNotFound
+            : MediaError.ffmpegFailed("no render pipeline available")
         for plan in candidates {
             let started = Date()
             do {
-                try tools.render(plan, progress: progress)
+                try await render(plan, progress: progress)
                 let elapsed = max(Date().timeIntervalSince(started), 0.001)
                 // Read the finished file back and confirm it is interchangeable with its source.
-                let rendered = try tools.probe(path: path).asset(path: path)
+                let rendered = await probe(path: path).asset
                 record.mismatch = rendered.map { ProxyVerifier.mismatch(source: asset, proxy: $0) }
-                    ?? "the rendered file has no picture"
+                    ?? "the rendered file could not be read back"
                 record.status = .ready
                 record.pipeline = plan.pipeline
                 record.speed = asset.durationSeconds > 0 ? asset.durationSeconds / elapsed : nil
@@ -126,6 +163,38 @@ public struct MediaLibrary: Sendable {
         throw lastError
     }
 
+    private func isAvailable(_ pipeline: RenderPipeline) -> Bool {
+        if pipeline.usesFFmpeg { return tools != nil }
+        #if os(macOS)
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    private func render(_ plan: ProxyRenderPlan, progress: (@Sendable (Double) -> Void)?) async throws {
+        if plan.pipeline == .native {
+            #if os(macOS)
+            // Write under a temporary name so a half-written proxy is never mistaken for a finished one.
+            var partial = plan
+            partial.outputPath = plan.outputPath + ".partial.mov"
+            do {
+                try await NativeMedia.renderProxy(partial, progress: progress)
+                try? FileManager.default.removeItem(atPath: plan.outputPath)
+                try FileManager.default.moveItem(atPath: partial.outputPath, toPath: plan.outputPath)
+            } catch {
+                try? FileManager.default.removeItem(atPath: partial.outputPath)
+                throw error
+            }
+            return
+            #else
+            throw MediaError.ffmpegFailed("the native pipeline needs macOS")
+            #endif
+        }
+        guard let tools else { throw MediaError.ffmpegNotFound }
+        try await Self.offload { try tools.render(plan, progress: progress) }
+    }
+
     /// The best file to play or analyse: a ready proxy if there is one, else the source.
     public func playablePath(for asset: Asset) -> String? {
         let fm = FileManager.default
@@ -136,13 +205,24 @@ public struct MediaLibrary: Sendable {
     }
 
     @discardableResult
-    public func makeThumbnails(for asset: Asset, count: Int = 12) throws -> [String] {
+    public func makeThumbnails(for asset: Asset, count: Int = 12) async throws -> [String] {
+        let directory = thumbnailDirectory(forAssetID: asset.id)
+        #if os(macOS)
+        if let playable = playablePath(for: asset) {
+            let paths = try await NativeMedia.writeThumbnails(
+                mediaPath: playable, durationSeconds: asset.durationSeconds, count: count, to: directory)
+            if !paths.isEmpty { return paths }
+        }
+        #endif
         let media = playablePath(for: asset) ?? asset.sourcePath
         guard asset.decodePath.canRender || media != asset.sourcePath else {
             throw MediaError.decoderUnavailable(asset.formatName)
         }
-        return try tools.writeThumbnails(mediaPath: media, durationSeconds: asset.durationSeconds, count: count,
-                                         to: thumbnailDirectory(forAssetID: asset.id))
+        guard let tools else { throw MediaError.ffmpegNotFound }
+        let duration = asset.durationSeconds
+        return try await Self.offload {
+            try tools.writeThumbnails(mediaPath: media, durationSeconds: duration, count: count, to: directory)
+        }
     }
 
     public func thumbnails(forAssetID id: String) -> [String] {
@@ -153,17 +233,16 @@ public struct MediaLibrary: Sendable {
 
     // MARK: Source recall
 
-    /// Given any media file — typically a proxy that has been through Premiere or Resolve —
-    /// finds the high-resolution source it stands for.
-    public func source(forFileAt path: String) throws -> SourceResolution {
+    /// Given any media file — typically a proxy that has been through Premiere, Resolve or
+    /// Final Cut — finds the high-resolution source it stands for.
+    public func source(forFileAt path: String) async throws -> SourceResolution {
         var clue = MediaClue(path: path)
-        if let probe = try? tools.probe(path: path) {
-            clue.embeddedAssetID = probe.embeddedAssetID
-            if let found = probe.asset(path: path) {
-                clue.startTimecodeFrames = found.startTimecodeFrames
-                clue.durationFrames = found.durationFrames
-                clue.reelName = found.reelName
-            }
+        let probed = await probe(path: path)
+        clue.embeddedAssetID = probed.embeddedAssetID
+        if let found = probed.asset {
+            clue.startTimecodeFrames = found.startTimecodeFrames
+            clue.durationFrames = found.durationFrames
+            clue.reelName = found.reelName
         }
         return try SourceResolver(catalog: catalog).resolve(clue)
     }
@@ -176,7 +255,7 @@ public struct MediaLibrary: Sendable {
         public var unresolvedCount: Int { resolutions.filter { $0.resolution.asset == nil }.count }
     }
 
-    /// Reads a Premiere XML, Resolve FCPXML or EDL and maps every clip back to its source.
+    /// Reads a Premiere XML, Resolve / Final Cut FCPXML or EDL and maps every clip back to its source.
     public func relinkTimeline(text: String) throws -> TimelineRelink? {
         guard let document = TimelineDocument(text: text) else { return nil }
         let resolver = SourceResolver(catalog: catalog)

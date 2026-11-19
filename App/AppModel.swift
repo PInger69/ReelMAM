@@ -88,13 +88,10 @@ final class AppModel {
             catalog = try! Catalog.inMemory()
             startupProblem = "The catalog could not be opened, so this session will not be saved. \(error.localizedDescription)"
         }
-        if let tools = FFmpegTools.locate() {
-            library = MediaLibrary(catalog: catalog, tools: tools, storageRoot: storage.path, naming: naming,
-                                   pipelines: RenderPipeline.appleSilicon)
-        } else {
-            library = nil
-            startupProblem = startupProblem ?? MediaError.ffmpegNotFound.localizedDescription
-        }
+        // Apple's frameworks do the work; FFmpeg is used only if it happens to be installed,
+        // and only for formats those frameworks cannot open.
+        library = MediaLibrary(catalog: catalog, tools: FFmpegTools.locate(), storageRoot: storage.path,
+                               naming: naming, pipelines: RenderPipeline.appleSilicon)
         alert = startupProblem
         reload()
     }
@@ -174,9 +171,9 @@ final class AppModel {
             var failures: [String] = []
             for file in paths.flatMap({ MediaLibrary.mediaFiles(at: $0) }) {
                 do {
-                    let asset = try library.importFile(at: file)
+                    let asset = try await library.importFile(at: file)
                     await self.setActivity(asset.id, Activity(title: "Thumbnails"))
-                    _ = try? library.makeThumbnails(for: asset)
+                    _ = try? await library.makeThumbnails(for: asset)
                     await self.setActivity(asset.id, nil)
                 } catch MediaError.isOwnProxy {
                     continue
@@ -214,12 +211,12 @@ final class AppModel {
             await limiter.acquire()
             await self.setActivity(asset.id, Activity(title: "Rendering proxy", progress: 0))
             do {
-                try library.makeProxy(for: asset, preset: preset) { fraction in
+                try await library.makeProxy(for: asset, preset: preset) { fraction in
                     Task { @MainActor in
                         self.activity[asset.id] = Activity(title: "Rendering proxy", progress: fraction)
                     }
                 }
-                if library.thumbnails(forAssetID: asset.id).isEmpty { _ = try? library.makeThumbnails(for: asset) }
+                if library.thumbnails(forAssetID: asset.id).isEmpty { _ = try? await library.makeThumbnails(for: asset) }
             } catch {
                 await self.show("\(asset.fileName): \(error.localizedDescription)")
             }
@@ -258,39 +255,39 @@ final class AppModel {
     }
 
     func recallSources(for urls: [URL]) {
-        guard let library else {
-            alert = MediaError.ffmpegNotFound.localizedDescription
-            return
-        }
+        guard let library else { return }
         let timelineExtensions: Set<String> = ["xml", "fcpxml", "edl"]
-        do {
-            if let timeline = urls.first(where: { timelineExtensions.contains($0.pathExtension.lowercased()) }) {
-                let text = try String(contentsOf: timeline, encoding: .utf8)
-                guard let relink = try library.relinkTimeline(text: text) else {
-                    alert = "\(timeline.lastPathComponent) is not a timeline StadaXR A.I. MAM can read."
-                    return
+        Task {
+            do {
+                if let timeline = urls.first(where: { timelineExtensions.contains($0.pathExtension.lowercased()) }) {
+                    let text = try String(contentsOf: timeline, encoding: .utf8)
+                    guard let relink = try library.relinkTimeline(text: text) else {
+                        alert = "\(timeline.lastPathComponent) is not a timeline StadaXR A.I. MAM can read."
+                        return
+                    }
+                    let rows = relink.resolutions.map { reference, resolution in
+                        RecallReport.Row(name: reference.name ?? reference.path ?? reference.reelName ?? "Clip",
+                                         asset: resolution.asset, detail: Self.describe(resolution))
+                    }
+                    let base = timeline.deletingPathExtension().lastPathComponent
+                    recall = RecallReport(
+                        title: "\(timeline.lastPathComponent) — \(rows.count - relink.unresolvedCount) of \(rows.count) clips matched",
+                        rows: rows,
+                        relinkedText: relink.document.format == .edl ? nil : relink.relinkedText,
+                        suggestedFileName: "\(base) (sources).\(timeline.pathExtension)")
+                } else {
+                    var rows: [RecallReport.Row] = []
+                    for url in urls {
+                        let resolution = try await library.source(forFileAt: url.path)
+                        rows.append(RecallReport.Row(name: url.lastPathComponent, asset: resolution.asset,
+                                                     detail: Self.describe(resolution)))
+                    }
+                    recall = RecallReport(title: "Sources for \(rows.count) file\(rows.count == 1 ? "" : "s")", rows: rows)
+                    if let only = rows.first?.asset, rows.count == 1 { selectedID = only.id }
                 }
-                let rows = relink.resolutions.map { reference, resolution in
-                    RecallReport.Row(name: reference.name ?? reference.path ?? reference.reelName ?? "Clip",
-                                     asset: resolution.asset, detail: Self.describe(resolution))
-                }
-                let base = timeline.deletingPathExtension().lastPathComponent
-                recall = RecallReport(
-                    title: "\(timeline.lastPathComponent) — \(rows.count - relink.unresolvedCount) of \(rows.count) clips matched",
-                    rows: rows,
-                    relinkedText: relink.document.format == .edl ? nil : relink.relinkedText,
-                    suggestedFileName: "\(base) (sources).\(timeline.pathExtension)")
-            } else {
-                let rows = try urls.map { url in
-                    let resolution = try library.source(forFileAt: url.path)
-                    return RecallReport.Row(name: url.lastPathComponent, asset: resolution.asset,
-                                            detail: Self.describe(resolution))
-                }
-                recall = RecallReport(title: "Sources for \(rows.count) file\(rows.count == 1 ? "" : "s")", rows: rows)
-                if let only = rows.first?.asset, rows.count == 1 { selectedID = only.id }
+            } catch {
+                alert = error.localizedDescription
             }
-        } catch {
-            alert = error.localizedDescription
         }
     }
 

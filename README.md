@@ -15,7 +15,9 @@ said and shown in it.
 | Format identification: ProRes profiles, ProRes RAW, DNxHR, XAVC, and camera RAW (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE, Canon, Nikon) | Built; RAW identification tested only with stand-in files, not real camera media |
 | Ingest of MOV / MP4 / ProRes / MXF / MKV and other FFmpeg-readable formats | Built, tested |
 | Proxy generation (ProRes Proxy and H.264) carrying source timecode, reel name, audio layout | Built, tested |
-| Apple Silicon proxy pipeline: hardware decode, GPU scaling and hardware encode, with automatic fallback, several renders at once, and the achieved speed recorded per proxy | Built; fallback and queueing tested, the hardware paths themselves not yet run on a Mac |
+| Native Apple pipeline (AVFoundation + VideoToolbox) for ingest, proxies and thumbnails, with no external tools needed | Built; exercised by the macOS CI tests, speed not yet measured on real footage |
+| Several renders at once, automatic fallback between pipelines, every proxy verified against its source, achieved speed recorded per proxy | Built, tested |
+| FFmpeg as an optional extra for formats Apple's frameworks cannot open | Built, tested |
 | Source recall: from a proxy file, or from a Premiere XML / Resolve FCPXML / EDL, back to the high-res source | Built, tested |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
 | Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |
@@ -59,11 +61,14 @@ sources, ready for online / conform.
 
 ## Building
 
-Requires macOS 14+, Xcode 16+, and:
+Requires an Apple Silicon Mac with macOS 14+ and Xcode 16+, and XcodeGen to create the Xcode project:
 
 ```bash
-brew install xcodegen ffmpeg
+brew install xcodegen
 ```
+
+FFmpeg is optional. Install it (`brew install ffmpeg`) only if you need formats Apple's
+frameworks cannot open, such as MXF or MKV, and to run the full test suite.
 
 Generate the Xcode project and open it:
 
@@ -94,4 +99,4 @@ The catalog lives in `~/Library/Application Support/StadaXR MAM`; proxies and th
 - Face grouping uses a general image embedding, so its matching threshold needs tuning on
   real footage; a dedicated face-recognition model is the next step.
 - Speech-to-text uses Apple's recogniser; long clips may want a Whisper-based engine.
-- FFmpeg is found on the system rather than bundled with the app.
+- Proxy speed on Apple Silicon has not been measured; each proxy records its speed so it can be.

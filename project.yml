@@ -39,3 +39,6 @@ targets:
         # Not sandboxed: the app reads media on any volume and runs FFmpeg.
         ENABLE_APP_SANDBOX: NO
         CODE_SIGN_STYLE: Automatic
+        # Apple Silicon only.
+        ARCHS: arm64
+        EXCLUDED_ARCHS: x86_64

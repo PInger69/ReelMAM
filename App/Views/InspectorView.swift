@@ -196,6 +196,11 @@ private struct InfoPane: View {
                 if let caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
             }
             Spacer()
+            ShareLink(item: URL(fileURLWithPath: path)) {
+                Image(systemName: "square.and.arrow.up")
+            }
+            .controlSize(.small)
+            .help("Share with AirDrop, Mail, Messages and other apps")
             Button("Reveal") { model.revealInFinder(path) }.controlSize(.small)
         }
     }

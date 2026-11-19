@@ -33,9 +33,9 @@ struct MediaLibraryTests {
                      pipelines: [.software])
     }
 
-    @Test func ingestReadsTechnicalMetadata() throws {
+    @Test func ingestReadsTechnicalMetadata() async throws {
         let library = try makeLibrary()
-        let asset = try library.importFile(at: try makeSource("A001_C003.mov"))
+        let asset = try await library.importFile(at: try makeSource("A001_C003.mov"))
         #expect(asset.width == 640 && asset.height == 360)
         #expect(asset.frameRate == .fps29_97)
         #expect(asset.durationFrames == 60)
@@ -45,11 +45,11 @@ struct MediaLibraryTests {
         #expect(MediaLibrary.mediaFiles(at: root + "/Volumes") == [asset.sourcePath])
     }
 
-    @Test func proxyKeepsIdentityAndSourceIsRecalledAfterRenaming() throws {
+    @Test func proxyKeepsIdentityAndSourceIsRecalledAfterRenaming() async throws {
         let library = try makeLibrary()
-        let asset = try library.importFile(at: try makeSource("A001_C003.mov"))
+        let asset = try await library.importFile(at: try makeSource("A001_C003.mov"))
         let progress = ProgressBox()
-        let proxy = try library.makeProxy(for: asset, preset: .h264_720) { progress.set($0) }
+        let proxy = try await library.makeProxy(for: asset, preset: .h264_720) { progress.set($0) }
         #expect(proxy.status == .ready)
         #expect(proxy.mismatch == nil)
         #expect(proxy.fileName == "A001_C003.mov")
@@ -68,31 +68,31 @@ struct MediaLibraryTests {
         // Rename and move it, as happens once it has been handed to an editor.
         let moved = root + "/handed-to-editor.mov"
         try FileManager.default.copyItem(atPath: proxy.path, toPath: moved)
-        let recalled = try library.source(forFileAt: moved)
+        let recalled = try await library.source(forFileAt: moved)
         #expect(recalled.asset?.id == asset.id)
         #expect(recalled.evidence == .embeddedID)
 
         // One of our own proxies is never ingested as if it were a source.
-        #expect(throws: MediaError.isOwnProxy(assetID: asset.id)) { try library.importFile(at: moved) }
+        await #expect(throws: MediaError.isOwnProxy(assetID: asset.id)) { try await library.importFile(at: moved) }
         #expect(library.playablePath(for: asset) == proxy.path)
     }
 
-    @Test func proResProxyAndThumbnails() throws {
+    @Test func proResProxyAndThumbnails() async throws {
         let library = try makeLibrary()
-        let asset = try library.importFile(at: try makeSource("B001_C001.mov", timecode: "00:59:58;00"))
-        let proxy = try library.makeProxy(for: asset, preset: .proResProxyHalf)
+        let asset = try await library.importFile(at: try makeSource("B001_C001.mov", timecode: "00:59:58;00"))
+        let proxy = try await library.makeProxy(for: asset, preset: .proResProxyHalf)
         let probe = try tools.probe(path: proxy.path)
         #expect(probe.asset(path: proxy.path)?.videoCodec == "prores")
         #expect(probe.asset(path: proxy.path)?.height == 180)
-        let thumbs = try library.makeThumbnails(for: asset, count: 4)
+        let thumbs = try await library.makeThumbnails(for: asset, count: 4)
         #expect(thumbs.count == 4)
         #expect(library.thumbnails(forAssetID: asset.id) == thumbs)
     }
 
-    @Test func timelineCutOnProxiesRelinksToSources() throws {
+    @Test func timelineCutOnProxiesRelinksToSources() async throws {
         let library = try makeLibrary()
-        let asset = try library.importFile(at: try makeSource("A001_C003.mov"))
-        let proxy = try library.makeProxy(for: asset, preset: .h264_720)
+        let asset = try await library.importFile(at: try makeSource("A001_C003.mov"))
+        let proxy = try await library.makeProxy(for: asset, preset: .h264_720)
         let xml = """
             <?xml version="1.0"?><xmeml version="4"><sequence><media><video><track><clipitem>
             <file id="f1"><name>A001_C003.mov</name><pathurl>file://localhost\(proxy.path.replacingOccurrences(of: " ", with: "%20"))</pathurl></file>
@@ -108,17 +108,17 @@ struct MediaLibraryTests {
 
     /// A pipeline that cannot run here (there is no VideoToolbox on the CI Linux machine, and a
     /// bogus decoder stands in for it on a Mac) must fall through to one that can.
-    @Test func fallsBackWhenAPipelineFails() throws {
+    @Test func fallsBackWhenAPipelineFails() async throws {
         var library = try makeLibrary()
         library.pipelines = [.videoToolboxGPU, .software]
-        var asset = try library.importFile(at: try makeSource("F001_C001.mov"))
+        var asset = try await library.importFile(at: try makeSource("F001_C001.mov"))
         asset.scan = .interlacedTopFirst  // makes the GPU pipeline inapplicable ...
-        let skipped = try library.makeProxy(for: asset, preset: .h264_720)
+        let skipped = try await library.makeProxy(for: asset, preset: .h264_720)
         #expect(skipped.pipeline == .software)
 
         #if os(Linux)
         asset.scan = .progressive  // ... and here it is attempted, fails, and is recovered from.
-        let recovered = try library.makeProxy(for: asset, preset: .h264_720)
+        let recovered = try await library.makeProxy(for: asset, preset: .h264_720)
         #expect(recovered.status == .ready)
         #expect(recovered.pipeline == .software)
         #endif
@@ -127,6 +127,66 @@ struct MediaLibraryTests {
         #expect((stored.speed ?? 0) > 0)
         #expect(try library.catalog.assetIDsWithoutReadyProxy().isEmpty)
     }
+
+    #if os(macOS)
+    /// The primary path on a Mac: Apple's frameworks only, checked independently with ffprobe.
+    @Test func nativePipelineProducesInterchangeableProxies() async throws {
+        let path = root + "/Volumes/RAID/Day 1/N001_C001.mov"
+        try tools.run(tools.ffmpeg, [
+            "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=3840x2160:rate=24000/1001:duration=1",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+            "-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le", "-c:a", "pcm_s24le", "-ac", "2",
+            "-timecode", "01:00:00:00", "-metadata:s:v:0", "reel_name=N001", path,
+        ])
+        var library = try makeLibrary()
+        library.pipelines = [.native]
+
+        let asset = try await library.importFile(at: path)
+        #expect(asset.formatName == "Apple ProRes 422 HQ")
+        #expect(asset.decodePath == .avFoundation)
+        #expect(asset.width == 3840 && asset.height == 2160)
+        #expect(asset.frameRate == .fps23_976)
+        #expect(asset.durationFrames == 24)
+        #expect(asset.startTimecode.description == "01:00:00:00")
+        #expect(asset.reelName == "N001")
+        #expect(asset.audioChannels == 2)
+
+        for preset in [ProxyPreset.proResProxyHalf, .h264_720] {
+            let proxy = try await library.makeProxy(for: asset, preset: preset)
+            #expect(proxy.pipeline == .native)
+            #expect(proxy.mismatch == nil)
+            let probe = try tools.probe(path: proxy.path)
+            let seen = try #require(probe.asset(path: proxy.path))
+            #expect(seen.videoCodec == (preset.isProRes ? "prores" : "h264"))
+            #expect(seen.height == preset.height(forSourceHeight: 2160))
+            #expect(seen.frameRate == .fps23_976)
+            #expect(seen.durationFrames == 24)
+            #expect(seen.startTimecode.description == "01:00:00:00")
+            #expect(seen.reelName == "N001")
+            #expect(seen.audioChannels == 2)
+            #expect(probe.embeddedAssetID == asset.id)
+            let recalled = try await library.source(forFileAt: proxy.path)
+            #expect(recalled.asset?.id == asset.id)
+        }
+        #expect(try await library.makeThumbnails(for: asset, count: 4).count == 4)
+        await #expect(throws: MediaError.isOwnProxy(assetID: asset.id)) {
+            try await library.importFile(at: library.naming.proxyPath(for: asset, root: library.proxyRoot))
+        }
+    }
+
+    /// Without FFmpeg the app still ingests and proxies what Apple's frameworks can open.
+    @Test func worksWithoutFFmpeg() async throws {
+        let source = try makeSource("W001_C001.mov")
+        let library = MediaLibrary(catalog: try Catalog.inMemory(), tools: nil, storageRoot: root + "/NoFFmpeg",
+                                   pipelines: RenderPipeline.appleSilicon)
+        let asset = try await library.importFile(at: source)
+        #expect(asset.durationFrames == 60)
+        let proxy = try await library.makeProxy(for: asset, preset: .h264_720)
+        #expect(proxy.pipeline == .native)
+        #expect(proxy.mismatch == nil)
+    }
+    #endif
 
     @Test func limiterRunsJobsInTurn() async {
         let limiter = JobLimiter(limit: 2)
@@ -145,7 +205,7 @@ struct MediaLibraryTests {
         #expect(peak.value == 2)
     }
 
-    @Test func cameraRAWIsIdentifiedAndCataloguedWithoutADecoder() throws {
+    @Test func cameraRAWIsIdentifiedAndCataloguedWithoutADecoder() async throws {
         let library = try makeLibrary()
         for (name, expected, path) in [("C001.braw", "Blackmagic RAW", DecodePath.blackmagicRAW),
                                        ("A001C002_240101XY.mxf", "Camera RAW (MXF)", .unsupported),
@@ -153,11 +213,11 @@ struct MediaLibraryTests {
                                        ("B001.ari", "ARRIRAW", .unsupported)] {
             let file = root + "/Volumes/RAID/Day 1/" + name
             _ = FileManager.default.createFile(atPath: file, contents: Data([0, 1, 2]))
-            let asset = try library.importFile(at: file)
+            let asset = try await library.importFile(at: file)
             #expect(asset.formatName == expected)
             #expect(asset.decodePath == path)
-            #expect(throws: MediaError.decoderUnavailable(expected)) {
-                try library.makeProxy(for: asset, preset: .h264_720)
+            await #expect(throws: MediaError.decoderUnavailable(expected)) {
+                try await library.makeProxy(for: asset, preset: .h264_720)
             }
         }
         #expect(try library.catalog.search("redcode").count == 1)
@@ -166,7 +226,7 @@ struct MediaLibraryTests {
 
     /// Renders a short clip in a given raster / rate / codec and checks it survives ingest and proxying.
     private func roundTrip(_ name: String, size: String, rate: String, codec: [String], seconds: String = "0.5",
-                           filter: String? = nil, timecode: String? = "01:00:00:00") throws -> (Asset, Asset) {
+                           filter: String? = nil, timecode: String? = "01:00:00:00") async throws -> (Asset, Asset) {
         let path = root + "/Volumes/RAID/Day 1/" + name
         var args = ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
                     "-i", "testsrc2=size=\(size):rate=\(rate):duration=\(seconds)"]
@@ -175,8 +235,8 @@ struct MediaLibraryTests {
         if let timecode { args += ["-timecode", timecode] }
         try tools.run(tools.ffmpeg, args + [path])
         let library = try makeLibrary()
-        let asset = try library.importFile(at: path)
-        let proxy = try library.makeProxy(for: asset, preset: .h264_1080)
+        let asset = try await library.importFile(at: path)
+        let proxy = try await library.makeProxy(for: asset, preset: .h264_1080)
         let proxyAsset = try #require(try tools.probe(path: proxy.path).asset(path: proxy.path))
         #expect(proxyAsset.frameRate == asset.frameRate)
         #expect(proxyAsset.durationFrames == asset.durationFrames)
@@ -188,8 +248,8 @@ struct MediaLibraryTests {
 
     private let proRes = ["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]
 
-    @Test func uhd24pAndUHD23976p() throws {
-        let (film, filmProxy) = try roundTrip("UHD_2398.mov", size: "3840x2160", rate: "24000/1001", codec: proRes)
+    @Test func uhd24pAndUHD23976p() async throws {
+        let (film, filmProxy) = try await roundTrip("UHD_2398.mov", size: "3840x2160", rate: "24000/1001", codec: proRes)
         #expect(film.pictureFormatName == "2160p23.976")
         #expect(film.resolutionClass == "UHD 4K")
         #expect(film.formatName == "Apple ProRes 422 HQ")
@@ -197,39 +257,39 @@ struct MediaLibraryTests {
         #expect(film.broadcastStandards == [.atsc3])
         #expect(filmProxy.height == 1080 && filmProxy.width == 1920)
 
-        let (true24, _) = try roundTrip("UHD_24.mov", size: "3840x2160", rate: "24", codec: proRes)
+        let (true24, _) = try await roundTrip("UHD_24.mov", size: "3840x2160", rate: "24", codec: proRes)
         #expect(true24.pictureFormatName == "2160p24")
         #expect(true24.frameRate == .fps24)
 
-        let (dci, _) = try roundTrip("DCI_24.mov", size: "4096x2160", rate: "24", codec: proRes)
+        let (dci, _) = try await roundTrip("DCI_24.mov", size: "4096x2160", rate: "24", codec: proRes)
         #expect(dci.resolutionClass == "DCI 4K")
         #expect(dci.broadcastStandards.isEmpty)
     }
 
-    @Test func eightKAndLargerAreNotRestricted() throws {
+    @Test func eightKAndLargerAreNotRestricted() async throws {
         let fast = ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"]
-        let (uhd8k, proxy) = try roundTrip("8K.mov", size: "7680x4320", rate: "24000/1001", codec: fast, seconds: "0.25")
+        let (uhd8k, proxy) = try await roundTrip("8K.mov", size: "7680x4320", rate: "24000/1001", codec: fast, seconds: "0.25")
         #expect(uhd8k.width == 7680 && uhd8k.height == 4320)
         #expect(uhd8k.resolutionClass == "UHD 8K")
         #expect(uhd8k.pictureFormatName == "4320p23.976")
         #expect(proxy.height == 1080)
 
         // Sony VENICE 2 full-frame 3:2 raster.
-        let (venice, _) = try roundTrip("8K6.mov", size: "8640x5760", rate: "24", codec: fast, seconds: "0.25")
+        let (venice, _) = try await roundTrip("8K6.mov", size: "8640x5760", rate: "24", codec: fast, seconds: "0.25")
         #expect(venice.resolutionClass == "8.6K")
         #expect(venice.pictureFormatName == "5760p24")
     }
 
-    @Test func atscInterlacedAndAnamorphicFormats() throws {
+    @Test func atscInterlacedAndAnamorphicFormats() async throws {
         let mpeg2i = ["-c:v", "mpeg2video", "-flags", "+ildct+ilme", "-b:v", "12M"]
-        let (hd, _) = try roundTrip("1080i.ts", size: "1920x1080", rate: "60000/1001", codec: mpeg2i + ["-top", "1"],
+        let (hd, _) = try await roundTrip("1080i.ts", size: "1920x1080", rate: "60000/1001", codec: mpeg2i + ["-top", "1"],
                                     filter: "tinterlace=interleave_top", timecode: nil)
         #expect(hd.scan == .interlacedTopFirst)
         #expect(hd.frameRate == .fps29_97)
         #expect(hd.pictureFormatName == "1080i59.94")
         #expect(hd.broadcastStandards == [.atsc1, .atsc3])
 
-        let (sd, _) = try roundTrip("480i.mpg", size: "704x480", rate: "60000/1001", codec: mpeg2i + ["-top", "0"],
+        let (sd, _) = try await roundTrip("480i.mpg", size: "704x480", rate: "60000/1001", codec: mpeg2i + ["-top", "0"],
                                     filter: "tinterlace=interleave_bottom,setsar=10/11", timecode: nil)
         #expect(sd.scan == .interlacedBottomFirst)
         #expect(sd.pictureFormatName == "480i59.94")
@@ -238,7 +298,7 @@ struct MediaLibraryTests {
         #expect(sd.resolutionClass == "SD")
         #expect(sd.broadcastStandards.contains(.atsc1))
 
-        let (p720, _) = try roundTrip("720p.ts", size: "1280x720", rate: "60000/1001",
+        let (p720, _) = try await roundTrip("720p.ts", size: "1280x720", rate: "60000/1001",
                                       codec: ["-c:v", "libx264", "-preset", "ultrafast"], timecode: nil)
         #expect(p720.pictureFormatName == "720p59.94")
         #expect(p720.broadcastStandards == [.atsc1, .atsc3])

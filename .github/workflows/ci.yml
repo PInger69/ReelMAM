@@ -62,6 +62,21 @@ jobs:
             exit 1
           fi
           tail -n 3 build.log
+      - name: Package the app for download
+        run: |
+          app=build/Build/Products/Debug/StadaMAM.app
+          # Ad-hoc signature, so the downloaded app opens on Apple Silicon after the user approves it.
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict "$app"
+          mkdir -p dist
+          ditto -c -k --keepParent "$app" dist/StadaMAM.zip
+          ls -la dist
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
+        with:
+          name: StadaMAM-app
+          path: dist/StadaMAM.zip
+          if-no-files-found: error
       - name: Launch the app with sample clips and take screenshots
         continue-on-error: true
         timeout-minutes: 6

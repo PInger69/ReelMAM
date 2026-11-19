@@ -6,7 +6,7 @@ struct StadaMAMApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("StradaXR AI MAM") {
+        WindowGroup("StradaXR A.I. MAM") {
             ContentView()
                 .environment(model)
                 .preferredColorScheme(.dark)

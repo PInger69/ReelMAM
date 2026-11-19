@@ -702,7 +702,7 @@ final class AppModel {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try EditorExport.document(for: clips, target: target, media: media,
-                                      collectionName: currentBin?.name ?? "StradaXR AI MAM",
+                                      collectionName: currentBin?.name ?? "StradaXR A.I. MAM",
                                       pathMappings: editorIsOnAnotherComputer ? pathMappings : [])
                 .write(to: url, atomically: true, encoding: .utf8)
             NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -735,7 +735,7 @@ final class AppModel {
                 if let timeline = urls.first(where: { timelineExtensions.contains($0.pathExtension.lowercased()) }) {
                     let text = try String(contentsOf: timeline, encoding: .utf8)
                     guard let relink = try library.relinkTimeline(text: text, pathMappings: pathMappings) else {
-                        alert = "\(timeline.lastPathComponent) is not a timeline StradaXR AI MAM can read."
+                        alert = "\(timeline.lastPathComponent) is not a timeline StradaXR A.I. MAM can read."
                         return
                     }
                     let rows = relink.resolutions.map { reference, resolution in

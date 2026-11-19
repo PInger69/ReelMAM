@@ -1,4 +1,4 @@
-# StradaXR AI MAM
+# StradaXR A.I. MAM
 
 A visually rich media asset manager for macOS. Catalogue every clip, generate proxies that
 always lead back to the camera original, mark and scrub fast, and search footage by what is

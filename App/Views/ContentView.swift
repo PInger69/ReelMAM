@@ -57,7 +57,7 @@ struct ContentView: View {
             model.importMedia(at: urls.map(\.path))
             return true
         }
-        .alert("StradaXR AI MAM", isPresented: Binding(get: { model.alert != nil },
+        .alert("StradaXR A.I. MAM", isPresented: Binding(get: { model.alert != nil },
                                                         set: { if !$0 { model.alert = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {

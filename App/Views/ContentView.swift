@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
+    @Environment(CutsModel.self) private var cuts
 
     var body: some View {
         @Bindable var model = model
@@ -14,7 +15,10 @@ struct ContentView: View {
             LibraryGridView()
                 .navigationSplitViewColumnWidth(min: 300, ideal: 480)
         } detail: {
-            if let asset = model.selectedAsset {
+            if cuts.showsEditor, let sequence = cuts.open {
+                SequenceEditorView(sequence: sequence)
+                    .id(sequence.sequence.id)
+            } else if let asset = model.selectedAsset {
                 ClipDetailView(asset: asset)
                     .id(asset.id)
             } else {
@@ -66,12 +70,16 @@ struct ContentView: View {
         .sheet(item: $model.recall) { report in
             RecallView(report: report)
         }
+        // Clips can leave the catalogue, or gain a proxy, while a sequence that uses them is open.
+        .onChange(of: model.revision) { cuts.reload() }
     }
 }
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @Environment(CutsModel.self) private var cuts
     @State private var renaming: Bin?
+    @State private var renamingSequence: CutSequence?
     @State private var newName = ""
 
     var body: some View {
@@ -108,6 +116,24 @@ struct SidebarView: View {
                         .help("New bin")
                 }
             }
+            Section {
+                ForEach(cuts.sequences) { sequence in
+                    sequenceRow(sequence)
+                }
+                if cuts.sequences.isEmpty {
+                    Text("Mark in and out on a clip and add the range to a sequence.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            } header: {
+                HStack {
+                    Text("Sequences")
+                    Spacer()
+                    Button { if let sequence = cuts.newSequence() { startRenaming(sequence) } } label: { Image(systemName: "plus") }
+                        .buttonStyle(.plain)
+                        .help("New sequence")
+                }
+            }
             if model.volumes.count > 1 || model.volumes.first?.name != "This Mac" {
                 Section("Locations") {
                     ForEach(model.volumes, id: \.name) { volume in
@@ -120,9 +146,12 @@ struct SidebarView: View {
             if !model.people.isEmpty {
                 Section("People") {
                     ForEach(Array(model.people.enumerated()), id: \.element.id) { index, person in
-                        Label(person.name ?? "Unnamed person \(index + 1)",
-                              systemImage: person.name == nil ? "person.crop.circle.badge.questionmark" : "person.crop.circle")
-                            .tag(LibraryFilter.person(person.id))
+                        Label {
+                            Text(person.name ?? "Unnamed person \(index + 1)")
+                        } icon: {
+                            PersonPortrait(person: person)
+                        }
+                        .tag(LibraryFilter.person(person.id))
                     }
                 }
             }
@@ -136,6 +165,40 @@ struct SidebarView: View {
             }
             Button("Cancel", role: .cancel) { renaming = nil }
         }
+        .alert("Name Sequence", isPresented: Binding(get: { renamingSequence != nil }, set: { if !$0 { renamingSequence = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Save") {
+                if let sequence = renamingSequence { cuts.rename(sequence, to: newName) }
+                renamingSequence = nil
+            }
+            Button("Cancel", role: .cancel) { renamingSequence = nil }
+        }
+    }
+
+    /// A sequence opens in the detail area when clicked; the clips shown beside it stay as they are.
+    private func sequenceRow(_ sequence: CutSequence) -> some View {
+        let isOpen = cuts.open?.sequence.id == sequence.id
+        return Button { cuts.open(id: sequence.id) } label: {
+            Label(sequence.name, systemImage: "timeline.selection")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .badge(cuts.cutCounts[sequence.id] ?? 0)
+        .listRowBackground(isOpen ? RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color.accentColor.opacity(cuts.showsEditor ? 0.35 : 0.15)).padding(.horizontal, 10) : nil)
+        .help(isOpen ? "Open sequence: marked ranges are added here" : "Open this sequence")
+        .contextMenu {
+            Button("Rename…") { startRenaming(sequence) }
+            Button("Duplicate") { cuts.duplicate(sequence) }
+            Divider()
+            Button("Delete Sequence", role: .destructive) { cuts.delete(sequence) }
+        }
+    }
+
+    private func startRenaming(_ sequence: CutSequence) {
+        newName = sequence.name
+        renamingSequence = sequence
     }
 
     private func binRow(_ bin: Bin) -> some View {
@@ -164,6 +227,7 @@ struct SidebarView: View {
 
 struct LibraryGridView: View {
     @Environment(AppModel.self) private var model
+    @Environment(CutsModel.self) private var cuts
     private let columns = [GridItem(.adaptive(minimum: 200, maximum: 320), spacing: 16)]
 
     var body: some View {
@@ -218,6 +282,8 @@ struct LibraryGridView: View {
     }
 
     private func select(_ asset: Asset) {
+        // While a sequence is on screen the clip opens inside it, above the storyboard, ready to
+        // keep parts of.
         model.selectedID = asset.id
         // Jump straight to the moment that matched the search.
         model.pendingSeekSeconds = model.bestHit(for: asset.id)?.timeSeconds

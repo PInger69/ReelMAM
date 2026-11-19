@@ -86,7 +86,7 @@ public enum EditorExport {
             .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
-    private static func baseName(_ asset: Asset) -> String {
+    static func baseName(_ asset: Asset) -> String {
         (asset.fileName as NSString).deletingPathExtension
     }
 
@@ -196,7 +196,7 @@ public enum EditorExport {
 
     // MARK: Final Cut Pro 7 XML (Premiere Pro)
 
-    private static func rateXML(_ rate: FrameRate) -> String {
+    static func rateXML(_ rate: FrameRate) -> String {
         "<rate><timebase>\(rate.nominal)</timebase><ntsc>\(rate.denominator == 1001 ? "TRUE" : "FALSE")</ntsc></rate>"
     }
 

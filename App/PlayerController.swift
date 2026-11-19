@@ -1,6 +1,7 @@
 import AVFoundation
 import Observation
 import StadaMAMCore
+import StadaMAMMedia
 
 /// Frame-accurate transport: play, JKL shuttle, single-frame stepping, and mark in / out.
 @MainActor
@@ -37,9 +38,49 @@ final class PlayerController {
         guard path != loadedPath else { return }
         loadedPath = path
         hasMedia = path != nil
+        lookKey = nil
         let resumeAt = currentSeconds
         player.replaceCurrentItem(with: path.map { AVPlayerItem(url: URL(fileURLWithPath: $0)) })
         if resumeAt > 0 { seek(toSeconds: resumeAt) }
+    }
+
+    /// Loads something already assembled, such as a sequence. `key` changes when its content does;
+    /// the playhead stays where it was, so an edit does not throw the viewer back to the start.
+    func load(item: AVPlayerItem?, key: String, frameRate: FrameRate, durationFrames: Int) {
+        self.frameRate = frameRate
+        self.durationFrames = durationFrames
+        guard key != loadedPath else { return }
+        loadedPath = key
+        hasMedia = item != nil
+        lookKey = nil
+        let resumeAt = min(currentSeconds, durationSeconds)
+        player.replaceCurrentItem(with: item)
+        seek(toSeconds: resumeAt)
+    }
+
+    // MARK: Viewing look
+
+    @ObservationIgnored private var lookKey: String?
+
+    /// Shows what is loaded through viewing looks, one per stretch of time (a whole clip is one
+    /// entry). An empty list shows the picture as it is. Only the display changes, never a file.
+    func applyLooks(_ looks: [(range: CMTimeRange, lut: ColorLUT)], key: String) {
+        guard key != lookKey, let item = player.currentItem else { return }
+        lookKey = key
+        guard !looks.isEmpty else {
+            item.videoComposition = nil
+            return
+        }
+        Task {
+            let composition = try? await ViewingLookRenderer.videoComposition(for: item.asset, looks: looks)
+            // Something else may have been loaded, or another look chosen, while this was prepared.
+            guard lookKey == key, player.currentItem === item else { return }
+            item.videoComposition = composition
+        }
+    }
+
+    func applyLook(_ lut: ColorLUT?, key: String) {
+        applyLooks(lut.map { [(CMTimeRange(start: .zero, duration: .positiveInfinity), $0)] } ?? [], key: key)
     }
 
     var currentFrame: Int { min(max(frameRate.frames(forSeconds: currentSeconds), 0), max(durationFrames - 1, 0)) }

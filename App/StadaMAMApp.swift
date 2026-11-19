@@ -4,12 +4,21 @@ import SwiftUI
 @main
 struct StadaMAMApp: App {
     @State private var model = AppModel()
+    @State private var remote = RemoteSharingModel()
+    @State private var ingest = ContinuousIngestModel()
+    @State private var cuts = CutsModel()
 
     var body: some Scene {
         WindowGroup("StradaXR A.I. MAM") {
             ContentView()
                 .environment(model)
+                .environment(cuts)
                 .preferredColorScheme(.dark)
+                .task {
+                    cuts.attach(model)
+                    remote.attach(model)
+                    ingest.attach(model)
+                }
                 .frame(minWidth: 1000, minHeight: 640)
         }
         .defaultSize(width: 1560, height: 940)
@@ -26,6 +35,9 @@ struct StadaMAMApp: App {
                     .environment(model)
                 Divider()
                 Button("Find Source for Proxy or Timeline…") { model.presentRecallPanel() }
+                Divider()
+                Button("New Sequence") { cuts.newSequence() }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
             }
             CommandGroup(replacing: .newItem) {
                 Button("Import Media…") { model.presentImportPanel() }
@@ -43,8 +55,14 @@ struct StadaMAMApp: App {
                     .tabItem { Label("Picture Labels", systemImage: "tag") }
                 DialogueAndStorageView()
                     .tabItem { Label("Dialogue & Storage", systemImage: "waveform") }
+                WatchFoldersView()
+                    .tabItem { Label("Watch Folders", systemImage: "folder.badge.gearshape") }
+                RemoteSharingView()
+                    .tabItem { Label("Remote Sharing", systemImage: "network") }
             }
             .environment(model)
+            .environment(remote)
+            .environment(ingest)
             .frame(width: 680, height: 640)
         }
     }

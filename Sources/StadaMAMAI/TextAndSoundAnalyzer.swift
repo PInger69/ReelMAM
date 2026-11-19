@@ -77,12 +77,24 @@ public enum SoundAnalyzer {
         }
 
         func request(_ request: SNRequest, didProduce result: SNResult) {
-            guard let result = result as? SNClassificationResult, let top = result.classifications.first,
-                  top.confidence >= minimumConfidence else { return }
-            let label = top.identifier.replacingOccurrences(of: "_", with: " ")
+            guard let result = result as? SNClassificationResult else { return }
+            let time = result.timeRange.start.seconds
+            var found: [FrameLabel] = []
+            var kept: Set<String> = []
+            if let top = result.classifications.first, top.confidence >= minimumConfidence {
+                let label = top.identifier.replacingOccurrences(of: "_", with: " ")
+                kept.insert(label)
+                found.append(FrameLabel(label: label, confidence: top.confidence, timeSeconds: time))
+            }
+            // An instrument under dialogue is never the loudest thing, so it is kept at a lower bar.
+            let guesses = result.classifications.prefix(12).map { (label: $0.identifier, confidence: $0.confidence) }
+            for instrument in InstrumentVocabulary.extras(in: guesses, known: InstrumentVocabulary.sound, alreadyKept: kept,
+                                                          minimumConfidence: min(minimumConfidence, InstrumentVocabulary.soundConfidence)) {
+                found.append(FrameLabel(label: instrument.label, confidence: instrument.confidence, timeSeconds: time))
+            }
+            guard !found.isEmpty else { return }
             lock.lock()
-            stored.append(FrameLabel(label: label, confidence: top.confidence,
-                                     timeSeconds: result.timeRange.start.seconds))
+            stored.append(contentsOf: found)
             lock.unlock()
         }
     }

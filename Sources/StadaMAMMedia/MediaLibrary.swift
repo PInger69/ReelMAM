@@ -211,7 +211,7 @@ public struct MediaLibrary: Sendable {
     public func makeProxy(for asset: Asset, preset: ProxyPreset,
                           progress: (@Sendable (Double) -> Void)? = nil) async throws -> ProxyRecord {
         guard asset.decodePath.canRender else { throw MediaError.decoderUnavailable(asset.formatName) }
-        let path = naming.proxyPath(for: asset, root: proxyRoot)
+        let path = naming.proxyPath(for: asset, root: proxyRoot, preset: preset)
         var record = try catalog.proxies(forAsset: asset.id).first { $0.path == path }
             ?? ProxyRecord(assetID: asset.id, path: path, preset: preset)
         record.preset = preset

@@ -77,9 +77,17 @@ public enum VisionAnalyzer {
                                          confidence: 0.7, timeSeconds: time))
             }
 
+            var keptNames: Set<String> = []
             for observation in (classify.results ?? []).filter({ Double($0.confidence) >= labelThreshold }).prefix(6) {
-                labels.append(FrameLabel(label: observation.identifier.replacingOccurrences(of: "_", with: " "),
-                                         confidence: Double(observation.confidence), timeSeconds: time))
+                let name = observation.identifier.replacingOccurrences(of: "_", with: " ")
+                keptNames.insert(name)
+                labels.append(FrameLabel(label: name, confidence: Double(observation.confidence), timeSeconds: time))
+            }
+            // Instruments are kept even when small in frame or outranked by "person" and the room.
+            let guesses = (classify.results ?? []).map { (label: $0.identifier, confidence: Double($0.confidence)) }
+            for instrument in InstrumentVocabulary.extras(in: guesses, known: InstrumentVocabulary.picture, alreadyKept: keptNames,
+                                                          minimumConfidence: min(labelThreshold, InstrumentVocabulary.pictureConfidence)) {
+                labels.append(FrameLabel(label: instrument.label, confidence: instrument.confidence, timeSeconds: time))
             }
             for observation in readText.results ?? [] {
                 guard let candidate = observation.topCandidates(1).first, candidate.confidence >= 0.5,

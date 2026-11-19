@@ -13,6 +13,7 @@ struct ClipData {
 
 struct ClipDetailView: View {
     @Environment(AppModel.self) private var model
+    @Environment(CutsModel.self) private var cuts
     let asset: Asset
     @State private var player = PlayerController()
     @State private var data = ClipData()
@@ -30,6 +31,7 @@ struct ClipDetailView: View {
                 TransportBar(asset: asset, player: player)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
+                if let sequence = cuts.open { OpenSequenceBar(sequence: sequence) }
             }
             .background(Color.black.opacity(0.35))
             .frame(minHeight: 320)
@@ -46,6 +48,16 @@ struct ClipDetailView: View {
         .toolbar {
             ToolbarItem {
                 Menu {
+                    Toggle("Show Rec.709 Looks", isOn: Binding(get: { cuts.looksEnabled }, set: { cuts.looksEnabled = $0 }))
+                    Divider()
+                    LookMenu(asset: asset)
+                } label: {
+                    Label("Look", systemImage: "camera.filters")
+                }
+                .help("View this clip through a Rec.709 look. The file is not changed.")
+            }
+            ToolbarItem {
+                Menu {
                     AssetActions(asset: asset)
                 } label: {
                     Label("Clip", systemImage: "ellipsis.circle")
@@ -53,6 +65,7 @@ struct ClipDetailView: View {
             }
         }
         .task(id: model.revision) { refresh() }
+        .onChange(of: cuts.revision) { applyLook() }
         .onChange(of: model.pendingSeekSeconds, initial: true) { _, seconds in
             guard let seconds else { return }
             player.seek(toSeconds: seconds)
@@ -91,9 +104,17 @@ struct ClipDetailView: View {
             proxies: (try? catalog.proxies(forAsset: asset.id)) ?? [])
         player.load(path: model.library?.playablePath(for: asset), frameRate: asset.frameRate,
                     durationFrames: asset.durationFrames)
+        applyLook()
+        cuts.readColourTagsIfNeeded(asset)
     }
 
-    /// Editor-standard keys: Space play/pause, J K L shuttle, arrows step, I / O mark, M marker.
+    /// Shows the clip through its viewing look (or as it is, when looks are off or it has none).
+    private func applyLook() {
+        player.applyLook(cuts.table(for: asset), key: cuts.lookKey(for: asset))
+    }
+
+    /// Editor-standard keys: Space play/pause, J K L shuttle, arrows step, I / O mark, M marker,
+    /// E add the marked range to the open sequence.
     private func handle(_ press: KeyPress) -> KeyPress.Result {
         let big = press.modifiers.contains(.shift) ? 10 : 1
         switch press.key {
@@ -111,6 +132,7 @@ struct ClipDetailView: View {
             case "o": press.modifiers.contains(.shift) ? player.goToOut() : player.markOut()
             case "x": player.clearMarks()
             case "m": model.addMarker(to: asset, inFrame: player.currentFrame, outFrame: nil)
+            case "e": cuts.add(asset, inFrame: player.inFrame, outFrame: player.outFrame)
             default: return .ignored
             }
         }
@@ -198,8 +220,32 @@ struct ScrubBar: View {
     }
 }
 
+/// Names the open sequence under the clip player, where marked ranges go, and leads back to it.
+struct OpenSequenceBar: View {
+    @Environment(CutsModel.self) private var cuts
+    let sequence: ResolvedSequence
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Label(sequence.sequence.name, systemImage: "timeline.selection")
+                .lineLimit(1)
+            Text("\(sequence.cuts.count) cut\(sequence.cuts.count == 1 ? "" : "s")  ·  \(Timecode(frames: sequence.totalFrames, rate: sequence.frameRate).description)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Button("Show Your Cut") { cuts.showsEditor = true }
+                .help("Open the cut: keep parts of clips, arrange them and play it through")
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(.bar)
+    }
+}
+
 struct TransportBar: View {
     @Environment(AppModel.self) private var model
+    @Environment(CutsModel.self) private var cuts
     let asset: Asset
     let player: PlayerController
 
@@ -257,6 +303,12 @@ struct TransportBar: View {
                 }
                 .help("Save the marked range as a subclip")
                 .disabled(player.inFrame == nil && player.outFrame == nil)
+                Button {
+                    cuts.add(asset, inFrame: player.inFrame, outFrame: player.outFrame)
+                } label: {
+                    Image(systemName: "plus.rectangle.on.rectangle")
+                }
+                .help(addHelp)
             }
             .controlSize(.small)
 
@@ -282,5 +334,10 @@ struct TransportBar: View {
         }
         .buttonStyle(.borderless)
         .help(help)
+    }
+
+    private var addHelp: String {
+        let what = player.inFrame == nil && player.outFrame == nil ? "the whole clip" : "the marked range"
+        return "Add \(what) to \(cuts.open.map { "“\($0.sequence.name)”" } ?? "a new sequence") (E)"
     }
 }

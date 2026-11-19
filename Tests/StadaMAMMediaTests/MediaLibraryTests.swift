@@ -1,5 +1,9 @@
 import Foundation
 import Testing
+#if os(macOS)
+import CoreGraphics
+import ImageIO
+#endif
 import StadaMAMCore
 @testable import StadaMAMMedia
 
@@ -44,6 +48,81 @@ struct MediaLibraryTests {
         #expect(asset.audioChannels == 2)
         #expect(MediaLibrary.mediaFiles(at: root + "/Volumes") == [asset.sourcePath])
     }
+
+    /// The remote preset through FFmpeg: HEVC, AAC, and still matches the source for relinking.
+    @Test func remoteProxyThroughFFmpegKeepsIdentity() async throws {
+        let library = try makeLibrary()
+        let asset = try await library.importFile(at: try makeSource("R001_C001.mov"))
+        let proxy = try await library.makeProxy(for: asset, preset: .remoteHEVC)
+        #expect(proxy.mismatch == nil)
+        let probe = try tools.probe(path: proxy.path)
+        let seen = try #require(probe.asset(path: proxy.path))
+        #expect(seen.videoCodec == "hevc")
+        #expect(seen.startTimecode.description == "01:00:00;00")
+        #expect(seen.reelName == "A001")
+        #expect(seen.audioChannels == 2 && seen.durationFrames == 60)
+        #expect(probe.embeddedAssetID == asset.id)
+        #expect(try await library.source(forFileAt: proxy.path).asset?.id == asset.id)
+    }
+
+    #if os(macOS)
+    /// The marked copy: made in the background, checked against the source, no server paths inside.
+    @Test func watermarkRendererMakesAVerifiedMarkedCopy() async throws {
+        let library = try makeLibrary()
+        let asset = try await library.importFile(at: try makeSource("W001_C001.mov"))
+        let proxy = try await library.makeProxy(for: asset, preset: .h264_720)
+        let renderer = WatermarkRenderer(tools: tools, cacheRoot: root + "/WM")
+
+        var state = renderer.state(for: proxy, asset: asset)
+        for _ in 0..<200 where state == .preparing {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            state = renderer.state(for: proxy, asset: asset)
+        }
+        guard case .ready(let path) = state else { Issue.record("not ready: \(state)"); return }
+        #expect(path == root + "/WM/\(proxy.id).mov")
+        let probe = try tools.probe(path: path)
+        let seen = try #require(probe.asset(path: path))
+        #expect(seen.videoCodec == "hevc" && seen.durationFrames == 60 && seen.audioChannels == 2)
+        #expect(seen.startTimecode.description == "01:00:00;00" && seen.reelName == "A001")
+        #expect(probe.embeddedAssetID == asset.id)
+        #expect(ProxyVerifier.mismatch(source: asset, proxy: seen) == nil)
+        // The mini's folder layout is not inside the file an editor receives.
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: path))
+        #expect(bytes.range(of: Data("Volumes/RAID".utf8)) == nil)
+        #expect(bytes.range(of: Data("StradaXR".utf8)) != nil)
+        // The mark really is in the picture: the copy differs from the clean proxy's frames.
+        let marked = root + "/marked.png", clean = root + "/clean.png"
+        try tools.run(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", path, "-frames:v", "1", marked])
+        try tools.run(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", proxy.path, "-frames:v", "1", clean])
+        #expect(try Data(contentsOf: URL(fileURLWithPath: marked)) != Data(contentsOf: URL(fileURLWithPath: clean)))
+        // Asked again, it is the same finished file, not another render.
+        #expect(renderer.state(for: proxy, asset: asset) == .ready(path: path))
+    }
+
+    /// Every visible pixel of the mark sits inside the lower-left quarter of the picture.
+    @Test func theMarkIsInTheLowerLeftQuarter() throws {
+        for (width, height) in [(1920, 1080), (640, 360), (1280, 720)] {
+            let png = root + "/mark-\(width).png"
+            try WatermarkImage.write(text: Watermark.text, width: width, height: height, to: png)
+            let source = try #require(CGImageSourceCreateWithURL(URL(fileURLWithPath: png) as CFURL, nil))
+            let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+            #expect(image.width == width && image.height == height)
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            let context = try #require(CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
+                                                 bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            var visible = 0
+            for row in 0..<height {          // row 0 is the top of the picture
+                for column in 0..<width where pixels[(row * width + column) * 4 + 3] > 0 {
+                    visible += 1
+                    #expect(column < width / 2 && row >= height / 2, "pixel at \(column),\(row) in \(width)x\(height)")
+                }
+            }
+            #expect(visible > 200)
+        }
+    }
+    #endif
 
     @Test func proxyKeepsIdentityAndSourceIsRecalledAfterRenaming() async throws {
         let library = try makeLibrary()
@@ -152,13 +231,13 @@ struct MediaLibraryTests {
         #expect(asset.reelName == "N001")
         #expect(asset.audioChannels == 2)
 
-        for preset in [ProxyPreset.proResProxyHalf, .h264_720] {
+        for preset in [ProxyPreset.proResProxyHalf, .h264_720, .remoteHEVC] {
             let proxy = try await library.makeProxy(for: asset, preset: preset)
             #expect(proxy.pipeline == .native)
             #expect(proxy.mismatch == nil)
             let probe = try tools.probe(path: proxy.path)
             let seen = try #require(probe.asset(path: proxy.path))
-            #expect(seen.videoCodec == (preset.isProRes ? "prores" : "h264"))
+            #expect(seen.videoCodec == (preset.isProRes ? "prores" : preset.isHEVC ? "hevc" : "h264"))
             #expect(seen.height == preset.height(forSourceHeight: 2160))
             #expect(seen.frameRate == .fps23_976)
             #expect(seen.durationFrames == 24)

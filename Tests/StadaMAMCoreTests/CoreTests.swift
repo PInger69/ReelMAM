@@ -125,6 +125,54 @@ private func makeAsset(_ path: String, start: Int = 0, duration: Int = 240, reel
         #expect(ProxyPreset.proResProxyHalf.height(forSourceHeight: 1082) == 540)
     }
 
+    @Test func remotePresetStaysInTheBitrateBand() {
+        let preset = ProxyPreset.remoteHEVC
+        #expect(preset.height(forSourceHeight: 2160) == 1080)
+        #expect(preset.height(forSourceHeight: 720) == 720)
+        #expect(preset.videoBitrate(width: 1920, height: 1080) == 10_000_000)
+        #expect(preset.videoBitrate(width: 3840, height: 2160) == 10_000_000)   // capped
+        #expect((3_000_000...10_000_000).contains(preset.videoBitrate(width: 1280, height: 720)))
+        #expect(preset.videoBitrate(width: 320, height: 180) == 3_000_000)
+        #expect(ProxyPreset.remoteCompressesAudio(channelsInTrack: 1) && ProxyPreset.remoteCompressesAudio(channelsInTrack: 2))
+        #expect(!ProxyPreset.remoteCompressesAudio(channelsInTrack: 6))
+        #expect(ProxyPreset.allCases.contains(.remoteHEVC) && ProxyPreset(rawValue: "remoteHEVC") == .remoteHEVC)
+    }
+
+    @Test func remotePresetKeepsIdentityAndCompressesAudio() {
+        let asset = makeAsset("/Volumes/RAID/A001.mov", start: 86400, reel: "A001")
+        func args(_ pipeline: RenderPipeline) -> [String] {
+            ProxyRenderPlan(asset: asset, preset: .remoteHEVC, outputPath: "/tmp/out.mov", pipeline: pipeline).ffmpegArguments
+        }
+        for pipeline in [RenderPipeline.software, .videoToolbox, .videoToolboxGPU] {
+            let a = args(pipeline)
+            #expect(a.contains("01:00:00:00") && a.contains("reel_name=A001"))
+            #expect(a.contains("\(ProxyMetadataKey.assetID)=\(asset.id)"))
+            #expect(a.contains("hvc1") && a.contains("aac") && !a.contains("pcm_s16le"))
+            #expect(a.contains("10000000") && a.contains("12000000"))
+        }
+        #expect(args(.software).contains("libx265"))
+        #expect(args(.videoToolbox).contains("hevc_videotoolbox"))
+    }
+
+    @Test func watermarkedCopyKeepsIdentityAndHidesTheMinisPaths() {
+        let asset = makeAsset("/Volumes/RAID/Day 1/A001.mov", start: 86400, reel: "A001")
+        func args(hardware: Bool) -> [String] {
+            WatermarkRenderPlan(asset: asset, proxyPath: "/p/in.mov", overlayPath: "/t/o.png", outputPath: "/c/out.mov",
+                                width: 1920, height: 1080, hardware: hardware).ffmpegArguments
+        }
+        for hardware in [true, false] {
+            let a = args(hardware: hardware)
+            #expect(a.contains("/t/o.png") && a.contains("01:00:00:00") && a.contains("reel_name=A001"))
+            #expect(a.contains("\(ProxyMetadataKey.assetID)=\(asset.id)"))
+            #expect(a.contains("\(WatermarkRenderPlan.metadataKey)=StradaXR"))
+            #expect(a.contains("hvc1") && a.contains("aac") && a.contains("10000000"))
+            #expect(!a.joined(separator: " ").contains("/Volumes/RAID"))
+            #expect(a.contains("-map_metadata") && a[a.firstIndex(of: "-map_metadata")! + 1] == "-1")
+        }
+        #expect(args(hardware: true).contains("hevc_videotoolbox") && args(hardware: false).contains("libx265"))
+        #expect(Watermark.text == "StradaXR")
+    }
+
     @Test func ffmpegArgumentsCarryIdentity() {
         let asset = makeAsset("/Volumes/RAID/A001.mov", start: 86400, reel: "A001")
         let args = ProxyRenderPlan(asset: asset, preset: .h264_720, outputPath: "/tmp/out.mov", pipeline: .software).ffmpegArguments
@@ -630,5 +678,57 @@ func found(_ resolution: SourceResolution) -> Found { Found(resolution.asset?.id
         #expect(candidates == ["/Volumes/Media-1/Day 1/A001.mov", "/Volumes/Backup/Day 1/A001.mov",
                                "/Volumes/Macintosh HD/Day 1/A001.mov"])
         #expect(VolumeRemapper.candidates(for: "/Users/ed/A001.mov", volumesRoot: "/Volumes", mountedVolumes: ["Media"]).isEmpty)
+    }
+}
+
+@Suite struct FaceRegroupingTests {
+    private func faces(_ asset: String, _ vectors: [[Float]]) -> [FaceSighting] {
+        vectors.enumerated().map { i, v in
+            FaceSighting(assetID: asset, timeSeconds: Double(i), x: 0, y: 0, width: 1, height: 1,
+                         embedding: FaceSighting.data(from: v))
+        }
+    }
+
+    @Test func rerunningSameFacesKeepsPeople() throws {
+        let catalog = try Catalog.inMemory()
+        let asset = try catalog.save(makeAsset("/Volumes/RAID/A.mov"))
+        let vectors: [[Float]] = [[1, 0, 0], [0, 1, 0]]
+        try catalog.replaceAndGroupFaces(assetID: asset.id, with: faces(asset.id, vectors))
+        let first = Set(try catalog.people().map(\.id))
+        #expect(first.count == 2)
+        for _ in 0..<3 {
+            try catalog.replaceAndGroupFaces(assetID: asset.id, with: faces(asset.id, vectors))
+        }
+        #expect(Set(try catalog.people().map(\.id)) == first)
+        #expect(Set(try catalog.faces(forAsset: asset.id).compactMap(\.personID)) == first)
+    }
+
+    @Test func namedPersonSurvivesReanalysisOfTheirOnlyClip() throws {
+        let catalog = try Catalog.inMemory()
+        let asset = try catalog.save(makeAsset("/Volumes/RAID/A.mov"))
+        try catalog.replaceAndGroupFaces(assetID: asset.id, with: faces(asset.id, [[1, 0, 0]]))
+        let person = try #require(try catalog.people().first)
+        try catalog.rename(person: person, to: "Ada")
+        try catalog.replaceAndGroupFaces(assetID: asset.id, with: faces(asset.id, [[0.99, 0.05, 0]]))
+        let people = try catalog.people()
+        #expect(people.count == 1)
+        #expect(people.first?.id == person.id)
+        #expect(people.first?.name == "Ada")
+        #expect(try catalog.faces(forAsset: asset.id).first?.personID == person.id)
+    }
+
+    @Test func emptyUnnamedPeopleAreRemovedNamedKept() throws {
+        let catalog = try Catalog.inMemory()
+        let asset = try catalog.save(makeAsset("/Volumes/RAID/A.mov"))
+        let face = faces(asset.id, [[1, 0, 0]])[0]
+        try catalog.replaceFaces(assetID: asset.id, with: [face])
+        let used = Person(name: nil)
+        try catalog.assign(sightingIDs: [face.id], to: used)
+        try catalog.assign(sightingIDs: [], to: Person(name: nil))
+        try catalog.assign(sightingIDs: [], to: Person(name: "  "))
+        let named = Person(name: "Grace")
+        try catalog.assign(sightingIDs: [], to: named)
+        #expect(try catalog.deleteEmptyPeople() == 2)
+        #expect(Set(try catalog.people().map(\.id)) == [used.id, named.id])
     }
 }

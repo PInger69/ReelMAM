@@ -21,6 +21,8 @@ targets:
         product: StadaMAMMedia
       - package: StadaMAMKit
         product: StadaMAMAI
+      - package: StadaMAMKit
+        product: StadaMAMRemote
     info:
       path: App/Info.plist
       properties:

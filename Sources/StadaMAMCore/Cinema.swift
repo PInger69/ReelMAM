@@ -272,3 +272,56 @@ public enum SpeechChunker {
     /// Below this a chunk is silence or room tone. Recognisers invent words ("thank you") for such audio.
     public static let silenceLevel = 0.004
 }
+
+/// Musical instruments that Apple's on-device recognisers can name, in picture and in sound.
+/// Instruments are often small in frame or under dialogue, so they are kept at a lower
+/// confidence than other labels rather than being crowded out by "person" or "speech".
+public enum InstrumentVocabulary {
+    /// Names used by the picture classifier.
+    public static let picture: Set<String> = [
+        "accordion", "bongo drum", "brass music", "cello", "clarinet", "drum", "flute", "guitar", "harp",
+        "musical instrument", "organ instrument", "piano", "saxophone", "string instrument", "tambourine",
+        "trombone", "trumpet", "tuba", "turntable", "ukulele", "violin", "woodwind", "xylophone",
+    ]
+
+    /// Names used by the sound classifier.
+    public static let sound: Set<String> = [
+        "accordion", "acoustic guitar", "bagpipes", "banjo", "bass drum", "bass guitar", "bassoon",
+        "bowed string instrument", "brass instrument", "cello", "chime", "clarinet", "cowbell", "cymbal",
+        "didgeridoo", "double bass", "drum", "drum kit", "electric guitar", "electric piano",
+        "electronic organ", "flute", "french horn", "glockenspiel", "gong", "guitar", "guitar strum",
+        "guitar tapping", "hammond organ", "harmonica", "harp", "harpsichord", "keyboard musical",
+        "mallet percussion", "mandolin", "marimba xylophone", "oboe", "organ", "percussion", "piano",
+        "plucked string instrument", "rattle instrument", "saxophone", "singing bowl", "sitar", "snare drum",
+        "steel guitar slide guitar", "steelpan", "synthesizer", "tabla", "tambourine", "theremin", "timpani",
+        "trombone", "trumpet", "ukulele", "vibraphone", "violin fiddle", "wind instrument", "zither",
+    ]
+
+    /// How sure a recogniser must be to keep an instrument.
+    public static let pictureConfidence = 0.15
+    public static let soundConfidence = 0.3
+
+    private static func normalized(_ label: String) -> String {
+        label.lowercased().replacingOccurrences(of: "_", with: " ").trimmingCharacters(in: .whitespaces)
+    }
+
+    public static func isInstrument(_ label: String) -> Bool {
+        let name = normalized(label)
+        return picture.contains(name) || sound.contains(name)
+    }
+
+    /// From one frame's or one moment's ranked guesses, the instruments worth keeping in
+    /// addition to whatever the normal threshold already kept.
+    public static func extras(in guesses: [(label: String, confidence: Double)], known: Set<String>,
+                              alreadyKept: Set<String>, minimumConfidence: Double, limit: Int = 3) -> [(label: String, confidence: Double)] {
+        var kept: [(label: String, confidence: Double)] = []
+        for guess in guesses.sorted(by: { $0.confidence > $1.confidence }) {
+            let name = normalized(guess.label)
+            guard guess.confidence >= minimumConfidence, known.contains(name), !alreadyKept.contains(name),
+                  !kept.contains(where: { $0.label == name }) else { continue }
+            kept.append((name, guess.confidence))
+            if kept.count == limit { break }
+        }
+        return kept
+    }
+}

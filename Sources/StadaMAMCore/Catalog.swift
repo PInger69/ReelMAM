@@ -191,6 +191,35 @@ public final class Catalog: Sendable {
             try db.create(index: "proxy_status", on: "proxy", columns: ["status", "assetID"])
             try db.create(index: "sceneTag_asset_kind", on: "sceneTag", columns: ["assetID", "kind"])
         }
+        migrator.registerMigration("v8-sequences-and-looks") { db in
+            try db.create(table: "sequence") { t in
+                t.column("id", .text).primaryKey()
+                t.column("name", .text).notNull()
+                t.column("frameRateNum", .integer)
+                t.column("frameRateDen", .integer)
+                t.column("dropFrame", .boolean).notNull()
+                t.column("startTimecode", .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.column("modifiedAt", .datetime).notNull()
+            }
+            try db.create(table: "sequenceCut") { t in
+                t.column("id", .text).primaryKey()
+                t.column("sequenceID", .text).notNull().references("sequence", onDelete: .cascade)
+                t.column("assetID", .text).notNull().indexed().references("asset", onDelete: .cascade)
+                t.column("position", .integer).notNull()
+                t.column("inFrame", .integer).notNull()
+                t.column("outFrame", .integer).notNull()
+                t.column("note", .text).notNull()
+            }
+            try db.create(index: "sequenceCut_order", on: "sequenceCut", columns: ["sequenceID", "position"])
+            // The viewing look chosen for a clip. No row means "choose from the clip's metadata".
+            try db.create(table: "clipLook") { t in
+                t.column("assetID", .text).primaryKey().references("asset", onDelete: .cascade)
+                t.column("mode", .text).notNull()
+                t.column("conversion", .text)
+                t.column("lutPath", .text)
+            }
+        }
         return migrator
     }
 

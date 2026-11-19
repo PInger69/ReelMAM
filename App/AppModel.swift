@@ -58,7 +58,7 @@ final class AppModel {
         didSet { UserDefaults.standard.set(defaultPreset.rawValue, forKey: "defaultPreset") }
     }
     /// Renders run a few at a time so the media engine is kept busy without being oversubscribed.
-    private let renderLimiter = JobLimiter(limit: MediaLibrary.recommendedConcurrentRenders)
+    let renderLimiter = JobLimiter(limit: MediaLibrary.recommendedConcurrentRenders)
     /// Analysis is heavy on the neural engine and memory; two clips at a time.
     private let analysisLimiter = JobLimiter(limit: 2)
     @ObservationIgnored private var thumbnailCache: [String: [String]] = [:]
@@ -197,6 +197,8 @@ final class AppModel {
         try? catalog.installDefaultLabelRulesIfNeeded()
         // Shares that were remounted under another name are picked up now and whenever a volume appears.
         _ = try? library?.remapRemountedVolumes()
+        // Unnamed people with no faces left (from re-runs before grouping was fixed) are cleared.
+        _ = try? catalog.deleteEmptyPeople()
         reload()
         // Clips catalogued before fingerprints existed get one now, off the main thread.
         if let library {
@@ -866,8 +868,7 @@ final class AppModel {
                 }
             }
             try catalog.replaceTags(assetID: asset.id, kinds: [.shot, .label, .text], with: visual.tags)
-            try catalog.replaceFaces(assetID: asset.id, with: visual.faces)
-            try groupFaces(for: asset.id)
+            try catalog.replaceAndGroupFaces(assetID: asset.id, with: visual.faces)
         } catch {
             problems.append("Picture: \(error.localizedDescription)")
         }
@@ -955,14 +956,9 @@ final class AppModel {
         }
     }
 
-    /// Matches this clip's new faces against a few known sightings of each person, rather than
-    /// re-reading every face in the catalogue after every clip.
-    private func groupFaces(for assetID: String) throws {
-        let known = Dictionary(uniqueKeysWithValues: try catalog.people().map { ($0.id, $0) })
-        let pool = try catalog.faceReferences() + catalog.faces(forAsset: assetID).filter { $0.personID == nil }
-        for (personID, sightingIDs) in FaceClusterer.cluster(pool) {
-            try catalog.assign(sightingIDs: sightingIDs, to: known[personID] ?? Person(id: personID))
-        }
+    /// One-off clean-up of unnamed people with no sightings (left behind by earlier re-runs).
+    func removeEmptyPeople() {
+        perform { try catalog.deleteEmptyPeople() }
     }
 
     func exportCaptions(for asset: Asset, webVTT: Bool) {

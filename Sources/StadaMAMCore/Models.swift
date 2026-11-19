@@ -125,6 +125,9 @@ public struct ProxyRecord: Codable, Identifiable, Hashable, Sendable, FetchableR
     public var preset: ProxyPreset
     public var status: ProxyStatus
     public var createdAt: Date
+    /// The pipeline that produced the file, and how fast it rendered relative to real time.
+    public var pipeline: RenderPipeline?
+    public var speed: Double?
 
     public init(id: String = newID(), assetID: String, path: String, preset: ProxyPreset,
                 status: ProxyStatus = .queued, createdAt: Date = Date()) {

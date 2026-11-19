@@ -29,6 +29,14 @@ struct ContentView: View {
                     Label("Import", systemImage: "square.and.arrow.down")
                 }
                 .help("Import clips or folders")
+                Menu {
+                    ForEach(ProxyPreset.allCases, id: \.self) { preset in
+                        Button(preset.displayName) { model.makeMissingProxies(preset: preset) }
+                    }
+                } label: {
+                    Label("Make Proxies", systemImage: "bolt.fill")
+                }
+                .help("Render a proxy for every clip that does not have one")
                 Button { model.presentRecallPanel() } label: {
                     Label("Find Source", systemImage: "arrow.triangle.2.circlepath")
                 }

@@ -15,6 +15,7 @@ said and shown in it.
 | Format identification: ProRes profiles, ProRes RAW, DNxHR, XAVC, and camera RAW (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE, Canon, Nikon) | Built; RAW identification tested only with stand-in files, not real camera media |
 | Ingest of MOV / MP4 / ProRes / MXF / MKV and other FFmpeg-readable formats | Built, tested |
 | Proxy generation (ProRes Proxy and H.264) carrying source timecode, reel name, audio layout | Built, tested |
+| Apple Silicon proxy pipeline: hardware decode, GPU scaling and hardware encode, with automatic fallback, several renders at once, and the achieved speed recorded per proxy | Built; fallback and queueing tested, the hardware paths themselves not yet run on a Mac |
 | Source recall: from a proxy file, or from a Premiere XML / Resolve FCPXML / EDL, back to the high-res source | Built, tested |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
 | Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |

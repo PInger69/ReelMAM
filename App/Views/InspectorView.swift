@@ -123,7 +123,7 @@ private struct InfoPane: View {
                 }
                 ForEach(proxies) { proxy in
                     pathRow(proxy.path, symbol: proxy.status == .ready ? "checkmark.seal.fill" : "exclamationmark.triangle",
-                            caption: "\(proxy.preset.displayName)  ·  \(proxy.status.rawValue)")
+                            caption: caption(for: proxy))
                 }
             }
 
@@ -139,6 +139,13 @@ private struct InfoPane: View {
             }
         }
         .onAppear { notes = asset.notes }
+    }
+
+    private func caption(for proxy: ProxyRecord) -> String {
+        var parts = [proxy.preset.displayName, proxy.status.rawValue]
+        if let pipeline = proxy.pipeline { parts.append(pipeline.displayName) }
+        if let speed = proxy.speed { parts.append(String(format: "%.1f× real time", speed)) }
+        return parts.joined(separator: "  ·  ")
     }
 
     private var picture: String {

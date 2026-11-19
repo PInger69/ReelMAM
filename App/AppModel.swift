@@ -38,7 +38,16 @@ struct RecallReport: Identifiable {
 @Observable
 final class AppModel {
     let catalog: Catalog
-    let library: MediaLibrary?
+    private(set) var library: MediaLibrary?
+    /// Where new proxies are written and how they are named.
+    var proxyNaming: ProxyNaming {
+        didSet {
+            UserDefaults.standard.set(proxyNaming.rawValue, forKey: "proxyNaming")
+            library?.naming = proxyNaming
+        }
+    }
+    /// Renders run a few at a time so the media engine is kept busy without being oversubscribed.
+    private let renderLimiter = JobLimiter(limit: MediaLibrary.recommendedConcurrentRenders)
 
     var assets: [Asset] = []
     var people: [Person] = []
@@ -69,6 +78,8 @@ final class AppModel {
         try? fm.createDirectory(at: support, withIntermediateDirectories: true)
         try? fm.createDirectory(at: storage, withIntermediateDirectories: true)
 
+        let naming = UserDefaults.standard.string(forKey: "proxyNaming").flatMap(ProxyNaming.init(rawValue:)) ?? .sameName
+        proxyNaming = naming
         var startupProblem: String?
         do {
             catalog = try Catalog(path: support.appendingPathComponent("Catalog.sqlite").path)
@@ -78,7 +89,8 @@ final class AppModel {
             startupProblem = "The catalog could not be opened, so this session will not be saved. \(error.localizedDescription)"
         }
         if let tools = FFmpegTools.locate() {
-            library = MediaLibrary(catalog: catalog, tools: tools, storageRoot: storage.path, hardwareEncoding: true)
+            library = MediaLibrary(catalog: catalog, tools: tools, storageRoot: storage.path, naming: naming,
+                                   pipelines: RenderPipeline.appleSilicon)
         } else {
             library = nil
             startupProblem = startupProblem ?? MediaError.ffmpegNotFound.localizedDescription
@@ -195,8 +207,12 @@ final class AppModel {
             alert = MediaError.ffmpegNotFound.localizedDescription
             return
         }
-        activity[asset.id] = Activity(title: "Rendering proxy", progress: 0)
+        guard activity[asset.id] == nil else { return }
+        activity[asset.id] = Activity(title: "Queued for proxy")
+        let limiter = renderLimiter
         Task.detached(priority: .userInitiated) {
+            await limiter.acquire()
+            await self.setActivity(asset.id, Activity(title: "Rendering proxy", progress: 0))
             do {
                 try library.makeProxy(for: asset, preset: preset) { fraction in
                     Task { @MainActor in
@@ -207,8 +223,17 @@ final class AppModel {
             } catch {
                 await self.show("\(asset.fileName): \(error.localizedDescription)")
             }
+            await limiter.release()
             await self.setActivity(asset.id, nil)
             await self.reload()
+        }
+    }
+
+    /// Queues a proxy for every clip that can be rendered and does not have one yet.
+    func makeMissingProxies(preset: ProxyPreset) {
+        let missing = (try? catalog.assetIDsWithoutReadyProxy()) ?? []
+        for asset in assets where missing.contains(asset.id) && asset.decodePath.canRender {
+            makeProxy(for: asset, preset: preset)
         }
     }
 

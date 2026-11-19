@@ -60,35 +60,40 @@ public struct FFmpegTools: Sendable {
         process.standardOutput = stdout
         process.standardError = stderr
         process.standardInput = FileHandle.nullDevice
+        // Wait on the termination handler rather than waitUntilExit(), which spins a run loop
+        // and can hang when called from a thread that has none.
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         try process.run()
 
-        // Drain both pipes concurrently so a chatty tool can never block on a full pipe.
-        let group = DispatchGroup()
-        let errorBox = DataBox()
-        DispatchQueue.global().async(group: group) {
-            errorBox.data = stderr.fileHandleForReading.readDataToEndOfFile()
+        // Drain both pipes on their own threads so a chatty tool can never block on a full pipe.
+        let drained = DispatchGroup()
+        let output = DataBox(), errors = DataBox()
+        DispatchQueue.global().async(group: drained) {
+            errors.data = stderr.fileHandleForReading.readDataToEndOfFile()
         }
-        var output = Data()
-        var pending = Data()
-        while true {
-            let chunk = stdout.fileHandleForReading.availableData
-            if chunk.isEmpty { break }
-            output.append(chunk)
-            guard let onOutputLine else { continue }
-            pending.append(chunk)
-            while let newline = pending.firstIndex(of: 0x0A) {
-                onOutputLine(String(decoding: pending[pending.startIndex..<newline], as: UTF8.self))
-                pending.removeSubrange(pending.startIndex...newline)
+        DispatchQueue.global().async(group: drained) {
+            var pending = Data()
+            while true {
+                let chunk = stdout.fileHandleForReading.availableData
+                if chunk.isEmpty { break }
+                output.data.append(chunk)
+                guard let onOutputLine else { continue }
+                pending.append(chunk)
+                while let newline = pending.firstIndex(of: 0x0A) {
+                    onOutputLine(String(decoding: pending[pending.startIndex..<newline], as: UTF8.self))
+                    pending.removeSubrange(pending.startIndex...newline)
+                }
             }
         }
-        process.waitUntilExit()
-        group.wait()
+        exited.wait()
+        drained.wait()
         guard process.terminationStatus == 0 else {
-            let message = String(decoding: errorBox.data, as: UTF8.self)
+            let message = String(decoding: errors.data, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             throw MediaError.ffmpegFailed(message.isEmpty ? "exit code \(process.terminationStatus)" : message)
         }
-        return output
+        return output.data
     }
 
     public func probe(path: String) throws -> FFProbeResult {

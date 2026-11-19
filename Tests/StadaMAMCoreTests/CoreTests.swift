@@ -117,13 +117,40 @@ private func makeAsset(_ path: String, start: Int = 0, duration: Int = 240, reel
 
     @Test func ffmpegArgumentsCarryIdentity() {
         let asset = makeAsset("/Volumes/RAID/A001.mov", start: 86400, reel: "A001")
-        let args = ProxyRenderPlan(asset: asset, preset: .h264_720, outputPath: "/tmp/out.mov", hardware: false).ffmpegArguments
+        let args = ProxyRenderPlan(asset: asset, preset: .h264_720, outputPath: "/tmp/out.mov", pipeline: .software).ffmpegArguments
         #expect(args.contains("01:00:00:00"))
         #expect(args.contains("reel_name=A001"))
         #expect(args.contains("-metadata:s:v:0"))
         #expect(args.contains("\(ProxyMetadataKey.assetID)=\(asset.id)"))
         #expect(args.contains("scale=-2:720"))
         #expect(args.last == "/tmp/out.mov")
+    }
+
+    @Test func pipelinesBuildTheRightCommand() {
+        var asset = makeAsset("/Volumes/RAID/A001.mov")  // 4096x2160
+        func args(_ pipeline: RenderPipeline, _ preset: ProxyPreset = .proResProxyHalf) -> [String] {
+            ProxyRenderPlan(asset: asset, preset: preset, outputPath: "/tmp/out.mov", pipeline: pipeline).ffmpegArguments
+        }
+        let gpu = args(.videoToolboxGPU)
+        #expect(gpu.contains("videotoolbox_vld"))
+        #expect(gpu.contains("scale_vt=w=2048:h=1080"))
+        #expect(gpu.contains("prores_videotoolbox"))
+        #expect(!gpu.contains("-pix_fmt"))
+        // Hardware decode has to be requested before the input it applies to.
+        #expect(gpu.firstIndex(of: "-hwaccel")! < gpu.firstIndex(of: "-i")!)
+
+        let hybrid = args(.videoToolbox, .h264_1080)
+        #expect(hybrid.contains("-hwaccel") && !hybrid.contains("videotoolbox_vld"))
+        #expect(hybrid.contains("scale=-2:1080") && hybrid.contains("h264_videotoolbox"))
+
+        let software = args(.software)
+        #expect(!software.contains("-hwaccel"))
+        #expect(software.contains("prores_ks"))
+
+        asset.scan = .interlacedTopFirst
+        #expect(!ProxyRenderPlan(asset: asset, preset: .h264_720, outputPath: "/o", pipeline: .videoToolboxGPU).isApplicable)
+        #expect(args(.videoToolbox).contains("bwdif=mode=send_frame,scale=-2:1080"))
+        #expect(ProxyNaming.besideSource.proxyPath(for: asset, root: "/Proxies") == "/Volumes/RAID/Proxy/A001.mov")
     }
 }
 

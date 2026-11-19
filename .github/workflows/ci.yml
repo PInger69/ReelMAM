@@ -13,6 +13,7 @@ jobs:
   core:
     name: Core tests (Linux)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     container: swift:6.0-noble
     steps:
       - uses: actions/checkout@v4
@@ -24,11 +25,13 @@ jobs:
   app:
     name: App build (macOS)
     runs-on: macos-15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen and FFmpeg
         run: brew install xcodegen ffmpeg
       - name: Test packages
+        timeout-minutes: 12
         run: swift test
       - name: Generate Xcode project
         run: xcodegen generate

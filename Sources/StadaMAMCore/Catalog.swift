@@ -124,6 +124,12 @@ public final class Catalog: Sendable {
                 t.add(column: "pixelAspectDen", .integer).notNull().defaults(to: 1)
             }
         }
+        migrator.registerMigration("v3-proxy-render-stats") { db in
+            try db.alter(table: "proxy") { t in
+                t.add(column: "pipeline", .text)
+                t.add(column: "speed", .double)
+            }
+        }
         return migrator
     }
 
@@ -166,6 +172,14 @@ public final class Catalog: Sendable {
 
     public func save(_ proxy: ProxyRecord) throws {
         try db.write { try proxy.save($0) }
+    }
+
+    public func assetIDsWithoutReadyProxy() throws -> Set<String> {
+        try db.read {
+            try String.fetchSet($0, sql: """
+                SELECT id FROM asset WHERE id NOT IN (SELECT assetID FROM proxy WHERE status = ?)
+                """, arguments: [ProxyStatus.ready.rawValue])
+        }
     }
 
     public func proxies(forAsset assetID: String) throws -> [ProxyRecord] {

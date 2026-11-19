@@ -30,7 +30,7 @@ struct MediaLibraryTests {
 
     private func makeLibrary() throws -> MediaLibrary {
         MediaLibrary(catalog: try Catalog.inMemory(), tools: tools, storageRoot: root + "/Library",
-                     hardwareEncoding: false)
+                     pipelines: [.software])
     }
 
     @Test func ingestReadsTechnicalMetadata() throws {
@@ -103,6 +103,45 @@ struct MediaLibraryTests {
         #expect(relink.unresolvedCount == 1)
         #expect(relink.relinkedText.contains(asset.sourcePath.replacingOccurrences(of: " ", with: "%20")))
         #expect(!relink.relinkedText.contains("/Library/Proxies/"))
+    }
+
+    /// A pipeline that cannot run here (there is no VideoToolbox on the CI Linux machine, and a
+    /// bogus decoder stands in for it on a Mac) must fall through to one that can.
+    @Test func fallsBackWhenAPipelineFails() throws {
+        var library = try makeLibrary()
+        library.pipelines = [.videoToolboxGPU, .software]
+        var asset = try library.importFile(at: try makeSource("F001_C001.mov"))
+        asset.scan = .interlacedTopFirst  // makes the GPU pipeline inapplicable ...
+        let skipped = try library.makeProxy(for: asset, preset: .h264_720)
+        #expect(skipped.pipeline == .software)
+
+        #if os(Linux)
+        asset.scan = .progressive  // ... and here it is attempted, fails, and is recovered from.
+        let recovered = try library.makeProxy(for: asset, preset: .h264_720)
+        #expect(recovered.status == .ready)
+        #expect(recovered.pipeline == .software)
+        #endif
+        let stored = try #require(try library.catalog.proxies(forAsset: asset.id).first)
+        #expect(stored.pipeline == .software)
+        #expect((stored.speed ?? 0) > 0)
+        #expect(try library.catalog.assetIDsWithoutReadyProxy().isEmpty)
+    }
+
+    @Test func limiterRunsJobsInTurn() async {
+        let limiter = JobLimiter(limit: 2)
+        let running = ProgressBox(), peak = ProgressBox()
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<8 {
+                group.addTask {
+                    await limiter.acquire()
+                    peak.set(running.add(1))
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                    _ = running.add(-1)
+                    await limiter.release()
+                }
+            }
+        }
+        #expect(peak.value == 2)
     }
 
     @Test func cameraRAWIsIdentifiedAndCataloguedWithoutADecoder() throws {
@@ -209,4 +248,5 @@ final class ProgressBox: @unchecked Sendable {
     private var stored = 0.0
     var value: Double { lock.lock(); defer { lock.unlock() }; return stored }
     func set(_ v: Double) { lock.lock(); stored = max(stored, v); lock.unlock() }
+    func add(_ v: Double) -> Double { lock.lock(); defer { lock.unlock() }; stored += v; return stored }
 }

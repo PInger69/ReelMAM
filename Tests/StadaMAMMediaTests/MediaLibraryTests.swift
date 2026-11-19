@@ -1,5 +1,9 @@
 import Foundation
 import Testing
+#if os(macOS)
+import CoreGraphics
+import ImageIO
+#endif
 import StadaMAMCore
 @testable import StadaMAMMedia
 
@@ -44,6 +48,81 @@ struct MediaLibraryTests {
         #expect(asset.audioChannels == 2)
         #expect(MediaLibrary.mediaFiles(at: root + "/Volumes") == [asset.sourcePath])
     }
+
+    /// The remote preset through FFmpeg: HEVC, AAC, and still matches the source for relinking.
+    @Test func remoteProxyThroughFFmpegKeepsIdentity() async throws {
+        let library = try makeLibrary()
+        let asset = try await library.importFile(at: try makeSource("R001_C001.mov"))
+        let proxy = try await library.makeProxy(for: asset, preset: .remoteHEVC)
+        #expect(proxy.mismatch == nil)
+        let probe = try tools.probe(path: proxy.path)
+        let seen = try #require(probe.asset(path: proxy.path))
+        #expect(seen.videoCodec == "hevc")
+        #expect(seen.startTimecode.description == "01:00:00;00")
+        #expect(seen.reelName == "A001")
+        #expect(seen.audioChannels == 2 && seen.durationFrames == 60)
+        #expect(probe.embeddedAssetID == asset.id)
+        #expect(try await library.source(forFileAt: proxy.path).asset?.id == asset.id)
+    }
+
+    #if os(macOS)
+    /// The marked copy: made in the background, checked against the source, no server paths inside.
+    @Test func watermarkRendererMakesAVerifiedMarkedCopy() async throws {
+        let library = try makeLibrary()
+        let asset = try await library.importFile(at: try makeSource("W001_C001.mov"))
+        let proxy = try await library.makeProxy(for: asset, preset: .h264_720)
+        let renderer = WatermarkRenderer(tools: tools, cacheRoot: root + "/WM")
+
+        var state = renderer.state(for: proxy, asset: asset)
+        for _ in 0..<200 where state == .preparing {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            state = renderer.state(for: proxy, asset: asset)
+        }
+        guard case .ready(let path) = state else { Issue.record("not ready: \(state)"); return }
+        #expect(path == root + "/WM/\(proxy.id).mov")
+        let probe = try tools.probe(path: path)
+        let seen = try #require(probe.asset(path: path))
+        #expect(seen.videoCodec == "hevc" && seen.durationFrames == 60 && seen.audioChannels == 2)
+        #expect(seen.startTimecode.description == "01:00:00;00" && seen.reelName == "A001")
+        #expect(probe.embeddedAssetID == asset.id)
+        #expect(ProxyVerifier.mismatch(source: asset, proxy: seen) == nil)
+        // The mini's folder layout is not inside the file an editor receives.
+        let bytes = try Data(contentsOf: URL(fileURLWithPath: path))
+        #expect(bytes.range(of: Data("Volumes/RAID".utf8)) == nil)
+        #expect(bytes.range(of: Data("StradaXR".utf8)) != nil)
+        // The mark really is in the picture: the copy differs from the clean proxy's frames.
+        let marked = root + "/marked.png", clean = root + "/clean.png"
+        try tools.run(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", path, "-frames:v", "1", marked])
+        try tools.run(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", proxy.path, "-frames:v", "1", clean])
+        #expect(try Data(contentsOf: URL(fileURLWithPath: marked)) != Data(contentsOf: URL(fileURLWithPath: clean)))
+        // Asked again, it is the same finished file, not another render.
+        #expect(renderer.state(for: proxy, asset: asset) == .ready(path: path))
+    }
+
+    /// Every visible pixel of the mark sits inside the lower-left quarter of the picture.
+    @Test func theMarkIsInTheLowerLeftQuarter() throws {
+        for (width, height) in [(1920, 1080), (640, 360), (1280, 720)] {
+            let png = root + "/mark-\(width).png"
+            try WatermarkImage.write(text: Watermark.text, width: width, height: height, to: png)
+            let source = try #require(CGImageSourceCreateWithURL(URL(fileURLWithPath: png) as CFURL, nil))
+            let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+            #expect(image.width == width && image.height == height)
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            let context = try #require(CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
+                                                 bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            var visible = 0
+            for row in 0..<height {          // row 0 is the top of the picture
+                for column in 0..<width where pixels[(row * width + column) * 4 + 3] > 0 {
+                    visible += 1
+                    #expect(column < width / 2 && row >= height / 2, "pixel at \(column),\(row) in \(width)x\(height)")
+                }
+            }
+            #expect(visible > 200)
+        }
+    }
+    #endif
 
     @Test func proxyKeepsIdentityAndSourceIsRecalledAfterRenaming() async throws {
         let library = try makeLibrary()
@@ -152,13 +231,13 @@ struct MediaLibraryTests {
         #expect(asset.reelName == "N001")
         #expect(asset.audioChannels == 2)
 
-        for preset in [ProxyPreset.proResProxyHalf, .h264_720] {
+        for preset in [ProxyPreset.proResProxyHalf, .h264_720, .remoteHEVC] {
             let proxy = try await library.makeProxy(for: asset, preset: preset)
             #expect(proxy.pipeline == .native)
             #expect(proxy.mismatch == nil)
             let probe = try tools.probe(path: proxy.path)
             let seen = try #require(probe.asset(path: proxy.path))
-            #expect(seen.videoCodec == (preset.isProRes ? "prores" : "h264"))
+            #expect(seen.videoCodec == (preset.isProRes ? "prores" : preset.isHEVC ? "hevc" : "h264"))
             #expect(seen.height == preset.height(forSourceHeight: 2160))
             #expect(seen.frameRate == .fps23_976)
             #expect(seen.durationFrames == 24)
@@ -187,6 +266,109 @@ struct MediaLibraryTests {
         #expect(proxy.mismatch == nil)
     }
     #endif
+
+    @Test func movedAndRenamedOriginalsAreFoundAgain() async throws {
+        let library = try makeLibrary()
+        let original = try makeSource("M001_C001.mov")
+        let other = try makeSource("M001_C002.mov", timecode: "02:00:00;00")
+        let asset = try await library.importFile(at: original)
+        _ = try await library.importFile(at: other)
+        try library.catalog.save(Marker(assetID: asset.id, inFrame: 10, name: "Keep me"))
+        let proxy = try await library.makeProxy(for: asset, preset: .h264_720)
+        #expect(try library.offlineAssets().isEmpty)
+
+        // The drive is reorganised: the clip is renamed and moved to another folder.
+        let archive = root + "/Volumes/ARCHIVE/2026/Reel 1"
+        try FileManager.default.createDirectory(atPath: archive, withIntermediateDirectories: true)
+        let moved = archive + "/interview_take3.mov"
+        try FileManager.default.moveItem(atPath: original, toPath: moved)
+        #expect(try library.offlineAssets().map(\.id) == [asset.id])
+
+        let found = try library.locateMissingSources(under: root + "/Volumes/ARCHIVE")
+        #expect(found.map(\.id) == [asset.id])
+        let relocated = try #require(try library.catalog.asset(id: asset.id))
+        #expect(relocated.sourcePath == moved)
+        #expect(relocated.fileName == "interview_take3.mov")
+        #expect(try library.offlineAssets().isEmpty)
+        // Everything attached to the clip is still attached, and the proxy still leads to it.
+        #expect(try library.catalog.markers(forAsset: asset.id).map(\.name) == ["Keep me"])
+        #expect(try await library.source(forFileAt: proxy.path).asset?.sourcePath == moved)
+        #expect(try library.catalog.allAssets().count == 2)
+    }
+
+    @Test func identicalCopiesKeepTheirOwnIdentityWhenOneMoves() async throws {
+        let library = try makeLibrary()
+        let first = try makeSource("D001_C001.mov")
+        let second = root + "/Volumes/RAID/Day 1/D001_C001 copy.mov"
+        try FileManager.default.copyItem(atPath: first, toPath: second)
+        let a = try await library.importFile(at: first)
+        let b = try await library.importFile(at: second)
+        #expect(a.id != b.id)
+        // One copy moves into a folder elsewhere; the search covers both copies.
+        let moved = root + "/Volumes/RAID/Moved"
+        try FileManager.default.createDirectory(atPath: moved, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(atPath: second, toPath: moved + "/renamed.mov")
+        let found = try library.locateMissingSources(under: root + "/Volumes/RAID")
+        #expect(found.map(\.id) == [b.id])
+        #expect(try library.catalog.asset(id: a.id)?.sourcePath == first)
+        #expect(try library.catalog.asset(id: b.id)?.sourcePath == moved + "/renamed.mov")
+        #expect(try library.offlineAssets().isEmpty)
+    }
+
+    @Test func clipsCataloguedWithoutAFingerprintGetOne() async throws {
+        let library = try makeLibrary()
+        var asset = try await library.importFile(at: try makeSource("K001_C001.mov"))
+        asset.fingerprint = nil
+        try library.catalog.save(asset)
+        var gone = Asset(sourcePath: root + "/Volumes/RAID/not-here.mov")
+        gone = try library.catalog.save(gone)
+        #expect(try library.backfillFingerprints() == 1)
+        #expect(try library.catalog.asset(id: asset.id)?.fingerprint != nil)
+        #expect(try library.catalog.asset(id: gone.id)?.fingerprint == nil)
+        #expect(try library.backfillFingerprints() == 0)
+    }
+
+    @Test func shareMountedUnderAnotherNameIsPickedUp() async throws {
+        let library = try makeLibrary()
+        let volumes = root + "/Volumes"
+        let asset = try await library.importFile(at: try makeSource("S001_C001.mov"))
+        // The share comes back as "RAID-1", as macOS does when the old mount point is taken.
+        try FileManager.default.moveItem(atPath: volumes + "/RAID", toPath: volumes + "/RAID-1")
+        try FileManager.default.createDirectory(atPath: volumes + "/Other/Day 1", withIntermediateDirectories: true)
+        #expect(try library.offlineAssets().count == 1)
+        let found = try library.remapRemountedVolumes(volumesRoot: volumes)
+        #expect(found.map(\.id) == [asset.id])
+        #expect(try library.catalog.asset(id: asset.id)?.sourcePath == volumes + "/RAID-1/Day 1/S001_C001.mov")
+        #expect(try library.offlineAssets().isEmpty)
+        #expect(try library.remapRemountedVolumes(volumesRoot: volumes).isEmpty)
+    }
+
+    @Test func timelineFromAWindowsEditorResolves() async throws {
+        let library = try makeLibrary()
+        let asset = try await library.importFile(at: try makeSource("T001_C001.mov"))
+        let mappings = [PathMapping(macPrefix: root + "/Volumes/RAID", editorPrefix: "Z:\\Media")]
+        let xml = EditorExport.document(for: [EditorClip(asset: asset)], target: .premierePro, media: .sources,
+                                        pathMappings: mappings)
+        #expect(xml.contains("file://localhost/Z%3A/Media/Day%201/T001_C001.mov"))
+        let relink = try #require(try library.relinkTimeline(text: xml, pathMappings: mappings))
+        #expect(relink.resolutions.first?.resolution.evidence == .sourcePath)
+        #expect(relink.relinkedText.contains(asset.sourcePath.replacingOccurrences(of: " ", with: "%20")))
+    }
+
+    @Test func reimportingAMovedOriginalKeepsItsIdentity() async throws {
+        let library = try makeLibrary()
+        let original = try makeSource("R001_C001.mov")
+        let asset = try await library.importFile(at: original)
+        let moved = root + "/Volumes/RAID/Day 1/renamed.mov"
+        try FileManager.default.moveItem(atPath: original, toPath: moved)
+        let again = try await library.importFile(at: moved)
+        #expect(again.id == asset.id)
+        #expect(try library.catalog.allAssets().count == 1)
+        // A genuine copy alongside a present original is a separate clip.
+        let copy = root + "/Volumes/RAID/Day 1/copy.mov"
+        try FileManager.default.copyItem(atPath: moved, toPath: copy)
+        #expect(try await library.importFile(at: copy).id != asset.id)
+    }
 
     @Test func limiterRunsJobsInTurn() async {
         let limiter = JobLimiter(limit: 2)

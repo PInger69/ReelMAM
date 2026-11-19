@@ -37,7 +37,9 @@ public struct MediaLibrary: Sendable {
         }
     }
 
-    public var proxyRoot: String { storageRoot + "/Proxies" }
+    /// Overrides where proxies are written, e.g. a large volume; thumbnails stay in `storageRoot`.
+    public var proxyFolder: String?
+    public var proxyRoot: String { proxyFolder ?? storageRoot + "/Proxies" }
 
     public func thumbnailDirectory(forAssetID id: String) -> String { storageRoot + "/Thumbnails/" + id }
 
@@ -108,15 +110,94 @@ public struct MediaLibrary: Sendable {
         let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.int64Value ?? 0
         let probed = await probe(path: path)
         if let id = probed.embeddedAssetID { throw MediaError.isOwnProxy(assetID: id) }
+        let fingerprint = SourceFingerprint.compute(path: path)
         if var asset = probed.asset {
             if asset.fileSize == 0 { asset.fileSize = size }
+            asset.fingerprint = fingerprint
             return try catalog.save(asset)
         }
         // The container could not be read at all, or exposes no picture stream.
         guard FormatIdentity.importableExtensions.contains(ext.lowercased()) else { throw MediaError.noVideoStream(path) }
         let identity = FormatIdentity.identify(fileExtension: ext, canDecode: false, vendor: probed.vendorHint)
-        return try catalog.save(Asset(sourcePath: path, fileSize: size, decodePath: identity.decodePath,
-                                      container: ext.lowercased(), formatName: identity.name, scan: .unknown))
+        var asset = Asset(sourcePath: path, fileSize: size, decodePath: identity.decodePath,
+                          container: ext.lowercased(), formatName: identity.name, scan: .unknown)
+        asset.fingerprint = fingerprint
+        return try catalog.save(asset)
+    }
+
+    // MARK: Missing originals
+
+    /// Gives a fingerprint to every reachable original that does not have one yet — clips
+    /// catalogued before fingerprints existed, or while their volume was slow to respond —
+    /// so they can still be found after a later move. Returns how many were added.
+    @discardableResult
+    public func backfillFingerprints() throws -> Int {
+        var added = 0
+        for var asset in try catalog.allAssets() where asset.fingerprint == nil {
+            guard let fingerprint = SourceFingerprint.compute(path: asset.sourcePath) else { continue }
+            asset.fingerprint = fingerprint
+            try catalog.save(asset)
+            added += 1
+        }
+        return added
+    }
+
+    /// Clips whose original file is not where the catalog says it is.
+    public func offlineAssets() throws -> [Asset] {
+        try catalog.allAssets().filter { !FileManager.default.fileExists(atPath: $0.sourcePath) }
+    }
+
+    /// Re-finds originals whose volume is mounted again under a different name — common with
+    /// SMB and other network shares (`/Volumes/Media` one day, `/Volumes/Media-1` the next).
+    /// The same relative path is tried on every mounted volume and confirmed by content.
+    @discardableResult
+    public func remapRemountedVolumes(volumesRoot: String = "/Volumes") throws -> [Asset] {
+        let missing = try offlineAssets()
+        guard !missing.isEmpty else { return [] }
+        let mounted = ((try? FileManager.default.contentsOfDirectory(atPath: volumesRoot)) ?? [])
+            .filter { !$0.hasPrefix(".") }
+        var found: [Asset] = []
+        for asset in missing {
+            let candidates = VolumeRemapper.candidates(for: asset.sourcePath, volumesRoot: volumesRoot,
+                                                       mountedVolumes: mounted)
+            for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
+                // Without a stored fingerprint, fall back to an exact size match.
+                let size = ((try? FileManager.default.attributesOfItem(atPath: candidate))?[.size] as? NSNumber)?.int64Value
+                let same = asset.fingerprint.map { $0 == SourceFingerprint.compute(path: candidate) } ?? (size == asset.fileSize)
+                guard same else { continue }
+                found.append(try catalog.save(asset.relocated(to: candidate)))
+                break
+            }
+        }
+        return found
+    }
+
+    /// Looks under a folder for originals that have moved or been renamed and points their
+    /// clips at the new location. Matching is by content, so the name does not matter.
+    /// Returns the clips that were found.
+    @discardableResult
+    public func locateMissingSources(under folder: String) throws -> [Asset] {
+        let missing = try offlineAssets().filter { $0.fingerprint != nil }
+        guard !missing.isEmpty else { return [] }
+        var bySize: [Int64: [Asset]] = [:]
+        for asset in missing {
+            if let size = asset.fingerprint.flatMap(SourceFingerprint.size(of:)) { bySize[size, default: []].append(asset) }
+        }
+        var found: [Asset] = []
+        var claimed = Set<String>()
+        // A file that already belongs to another clip (an identical copy imported separately)
+        // is not a candidate: matching it would hand the wrong clip's identity over.
+        let owned = Set(try catalog.allAssets().map(\.sourcePath))
+        for file in Self.mediaFiles(at: folder) where !owned.contains(file) {
+            let size = ((try? FileManager.default.attributesOfItem(atPath: file))?[.size] as? NSNumber)?.int64Value ?? -1
+            // Only files of exactly the right size are worth hashing.
+            guard let candidates = bySize[size], let fingerprint = SourceFingerprint.compute(path: file),
+                  let match = candidates.first(where: { $0.fingerprint == fingerprint && !claimed.contains($0.id) })
+            else { continue }
+            claimed.insert(match.id)
+            found.append(try catalog.save(match.relocated(to: file)))
+        }
+        return found
     }
 
     // MARK: Proxies
@@ -130,7 +211,7 @@ public struct MediaLibrary: Sendable {
     public func makeProxy(for asset: Asset, preset: ProxyPreset,
                           progress: (@Sendable (Double) -> Void)? = nil) async throws -> ProxyRecord {
         guard asset.decodePath.canRender else { throw MediaError.decoderUnavailable(asset.formatName) }
-        let path = naming.proxyPath(for: asset, root: proxyRoot)
+        let path = naming.proxyPath(for: asset, root: proxyRoot, preset: preset)
         var record = try catalog.proxies(forAsset: asset.id).first { $0.path == path }
             ?? ProxyRecord(assetID: asset.id, path: path, preset: preset)
         record.preset = preset
@@ -261,12 +342,20 @@ public struct MediaLibrary: Sendable {
     }
 
     /// Reads a Premiere XML, Resolve / Final Cut FCPXML or EDL and maps every clip back to its source.
-    public func relinkTimeline(text: String) throws -> TimelineRelink? {
+    /// - Parameter pathMappings: translates paths written on the editor's computer (Windows
+    ///   drive letters, Linux mount points) back to this Mac before matching.
+    public func relinkTimeline(text: String, pathMappings: [PathMapping] = []) throws -> TimelineRelink? {
         guard let document = TimelineDocument(text: text) else { return nil }
         let resolver = SourceResolver(catalog: catalog)
         var byReference: [TimelineMediaReference: SourceResolution] = [:]
         for reference in document.references {
-            byReference[reference] = try resolver.resolve(reference.clue)
+            var clue = reference.clue
+            if let path = clue.path {
+                clue.path = PathMapping.toMac(path, using: pathMappings)
+                // File names are taken from the last component whichever slash the editor's computer uses.
+                clue.fileName = path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init)
+            }
+            byReference[reference] = try resolver.resolve(clue)
         }
         return TimelineRelink(
             document: document,

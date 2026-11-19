@@ -55,6 +55,13 @@ private func makeAsset(_ path: String, start: Int = 0, duration: Int = 240, reel
         #expect(try catalog.allAssets().count == 1)
     }
 
+    @Test func relocatedClipTakesItsNewNameAndVolume() {
+        let moved = makeAsset("/Volumes/RAID/Day1/A001.mov").relocated(to: "/Volumes/ARCHIVE/2026/take 3.mov")
+        #expect(moved.fileName == "take 3.mov")
+        #expect(moved.volumeName == "ARCHIVE")
+        #expect(makeAsset("/Volumes/RAID/A.mov").relocated(to: "/Users/ed/A.mov").volumeName == nil)
+    }
+
     @Test func searchAcrossNamesTranscriptsTagsAndMarkers() throws {
         let catalog = try Catalog.inMemory()
         let interview = try catalog.save(makeAsset("/Volumes/RAID/Interview_Mayor.mov"))
@@ -116,6 +123,54 @@ private func makeAsset(_ path: String, start: Int = 0, duration: Int = 240, reel
         #expect(ProxyPreset.h264_720.height(forSourceHeight: 2160) == 720)
         #expect(ProxyPreset.h264_1080.height(forSourceHeight: 486) == 486)
         #expect(ProxyPreset.proResProxyHalf.height(forSourceHeight: 1082) == 540)
+    }
+
+    @Test func remotePresetStaysInTheBitrateBand() {
+        let preset = ProxyPreset.remoteHEVC
+        #expect(preset.height(forSourceHeight: 2160) == 1080)
+        #expect(preset.height(forSourceHeight: 720) == 720)
+        #expect(preset.videoBitrate(width: 1920, height: 1080) == 10_000_000)
+        #expect(preset.videoBitrate(width: 3840, height: 2160) == 10_000_000)   // capped
+        #expect((3_000_000...10_000_000).contains(preset.videoBitrate(width: 1280, height: 720)))
+        #expect(preset.videoBitrate(width: 320, height: 180) == 3_000_000)
+        #expect(ProxyPreset.remoteCompressesAudio(channelsInTrack: 1) && ProxyPreset.remoteCompressesAudio(channelsInTrack: 2))
+        #expect(!ProxyPreset.remoteCompressesAudio(channelsInTrack: 6))
+        #expect(ProxyPreset.allCases.contains(.remoteHEVC) && ProxyPreset(rawValue: "remoteHEVC") == .remoteHEVC)
+    }
+
+    @Test func remotePresetKeepsIdentityAndCompressesAudio() {
+        let asset = makeAsset("/Volumes/RAID/A001.mov", start: 86400, reel: "A001")
+        func args(_ pipeline: RenderPipeline) -> [String] {
+            ProxyRenderPlan(asset: asset, preset: .remoteHEVC, outputPath: "/tmp/out.mov", pipeline: pipeline).ffmpegArguments
+        }
+        for pipeline in [RenderPipeline.software, .videoToolbox, .videoToolboxGPU] {
+            let a = args(pipeline)
+            #expect(a.contains("01:00:00:00") && a.contains("reel_name=A001"))
+            #expect(a.contains("\(ProxyMetadataKey.assetID)=\(asset.id)"))
+            #expect(a.contains("hvc1") && a.contains("aac") && !a.contains("pcm_s16le"))
+            #expect(a.contains("10000000") && a.contains("12000000"))
+        }
+        #expect(args(.software).contains("libx265"))
+        #expect(args(.videoToolbox).contains("hevc_videotoolbox"))
+    }
+
+    @Test func watermarkedCopyKeepsIdentityAndHidesTheMinisPaths() {
+        let asset = makeAsset("/Volumes/RAID/Day 1/A001.mov", start: 86400, reel: "A001")
+        func args(hardware: Bool) -> [String] {
+            WatermarkRenderPlan(asset: asset, proxyPath: "/p/in.mov", overlayPath: "/t/o.png", outputPath: "/c/out.mov",
+                                width: 1920, height: 1080, hardware: hardware).ffmpegArguments
+        }
+        for hardware in [true, false] {
+            let a = args(hardware: hardware)
+            #expect(a.contains("/t/o.png") && a.contains("01:00:00:00") && a.contains("reel_name=A001"))
+            #expect(a.contains("\(ProxyMetadataKey.assetID)=\(asset.id)"))
+            #expect(a.contains("\(WatermarkRenderPlan.metadataKey)=StradaXR"))
+            #expect(a.contains("hvc1") && a.contains("aac") && a.contains("10000000"))
+            #expect(!a.joined(separator: " ").contains("/Volumes/RAID"))
+            #expect(a.contains("-map_metadata") && a[a.firstIndex(of: "-map_metadata")! + 1] == "-1")
+        }
+        #expect(args(hardware: true).contains("hevc_videotoolbox") && args(hardware: false).contains("libx265"))
+        #expect(Watermark.text == "StradaXR")
     }
 
     @Test func ffmpegArgumentsCarryIdentity() {
@@ -505,5 +560,175 @@ func found(_ resolution: SourceResolution) -> Found { Found(resolution.asset?.id
             #expect(back.contains("/Volumes/RAID/Day%201/A001_C003.mov"))
             #expect(!back.contains("/Proxies/"))
         }
+    }
+}
+
+@Suite struct BinTests {
+    @Test func binsNestAndSmartBinsFillThemselves() throws {
+        let catalog = try Catalog.inMemory()
+        let a = try catalog.save(makeAsset("/Volumes/RAID/Day1/A001_C001.mov"))
+        let b = try catalog.save(makeAsset("/Volumes/RAID/Day1/A001_C002.mov"))
+        let c = try catalog.save(makeAsset("/Volumes/RAID/Day2/Interview_Mayor.mov"))
+
+        let project = Bin(name: "Harbour Film")
+        let selects = Bin(name: "Selects", parentID: project.id)
+        let interviews = Bin(name: "Interviews", parentID: project.id, smartQuery: "interview")
+        for bin in [project, selects, interviews] { try catalog.save(bin) }
+        try catalog.add(assetIDs: [a.id], toBin: project.id)
+        try catalog.add(assetIDs: [b.id, b.id], toBin: selects.id)
+
+        #expect(try catalog.assetIDs(inBin: selects.id) == [b.id])
+        #expect(try catalog.assetIDs(inBin: interviews.id) == [c.id])
+        // A bin shows its own clips plus everything in the bins inside it, smart ones included.
+        #expect(try catalog.assetIDs(inBin: project.id) == [a.id, b.id, c.id])
+        #expect(try catalog.binCounts() == [project.id: 3, selects.id: 1, interviews.id: 1])
+        #expect(try catalog.binIDs(containing: b.id) == [selects.id])
+
+        // The smart bin picks up later work without being touched.
+        try catalog.replaceTranscript(assetID: a.id, with: [
+            TranscriptSegment(assetID: a.id, startSeconds: 0, endSeconds: 2, text: "This interview is rolling"),
+        ])
+        #expect(try catalog.assetIDs(inBin: interviews.id) == [a.id, c.id])
+
+        let tree = BinNode.tree(from: try catalog.bins())
+        #expect(tree.map(\.bin.name) == ["Harbour Film"])
+        #expect(tree[0].children?.map(\.bin.name) == ["Interviews", "Selects"])
+
+        try catalog.remove(assetIDs: [b.id], fromBin: selects.id)
+        #expect(try catalog.assetIDs(inBin: selects.id).isEmpty)
+        // Deleting a bin removes its nested bins but never the clips.
+        try catalog.deleteBin(id: project.id)
+        #expect(try catalog.bins().isEmpty)
+        #expect(try catalog.allAssets().count == 3)
+        // Deleting a clip removes it from its bins.
+        let keep = Bin(name: "Keep")
+        try catalog.save(keep)
+        try catalog.add(assetIDs: [a.id], toBin: keep.id)
+        try catalog.deleteAsset(id: a.id)
+        #expect(try catalog.assetIDs(inBin: keep.id).isEmpty)
+    }
+
+    @Test func sortingAndGrouping() {
+        var a = makeAsset("/Volumes/RAID/Day1/clip10.mov", duration: 100, reel: "A001")
+        var b = makeAsset("/Volumes/RAID/Day1/clip2.mov", duration: 300, reel: "A001")
+        var c = makeAsset("/Volumes/NAS/Day2/Clip1.mov", duration: 200)
+        a.rating = 5
+        b.capturedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        c.capturedAt = Date(timeIntervalSince1970: 1_800_090_000)
+        c.fileSize = 9
+        let all = [a, b, c]
+        #expect(LibrarySort.name.sorted(all).map(\.fileName) == ["Clip1.mov", "clip2.mov", "clip10.mov"])
+        #expect(LibrarySort.duration.sorted(all).map(\.fileName) == ["clip2.mov", "Clip1.mov", "clip10.mov"])
+        #expect(LibrarySort.rating.sorted(all).first?.fileName == "clip10.mov")
+        #expect(LibrarySort.captured.sorted(all).map(\.fileName) == ["Clip1.mov", "clip2.mov", "clip10.mov"])
+        #expect(LibrarySort.size.sorted(all).first?.fileName == "Clip1.mov")
+
+        let byVolume = LibraryGrouping.volume.groups(LibrarySort.name.sorted(all))
+        #expect(byVolume.map(\.title) == ["NAS", "RAID"])
+        #expect(byVolume[1].assets.map(\.fileName) == ["clip2.mov", "clip10.mov"])
+        #expect(LibraryGrouping.reel.groups(all).map(\.title) == ["A001", "No reel"])
+        #expect(LibraryGrouping.folder.groups(all).map(\.title) == ["/Volumes/NAS/Day2", "/Volumes/RAID/Day1"])
+        #expect(LibraryGrouping.none.groups(all).count == 1)
+        #expect(LibraryGrouping.none.groups([]).isEmpty)
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        #expect(LibraryGrouping.day.groups(LibrarySort.captured.sorted(all), calendar: utc).map(\.title)
+            == ["2027-01-16", "2027-01-15", "Unknown date"])
+    }
+}
+
+@Suite struct NetworkPathTests {
+    let mappings = [
+        PathMapping(macPrefix: "/Volumes/Media", editorPrefix: "Z:\\Media"),
+        PathMapping(macPrefix: "/Volumes/Media/Proxies/", editorPrefix: "/mnt/proxies"),
+        PathMapping(macPrefix: "/Volumes/NAS", editorPrefix: "\\\\server\\nas"),
+    ]
+
+    @Test func macPathsBecomeEditorPaths() {
+        #expect(PathMapping.toEditor("/Volumes/Media/Day 1/A001.mov", using: mappings) == "/Z:/Media/Day 1/A001.mov")
+        // The most specific mapping wins.
+        #expect(PathMapping.toEditor("/Volumes/Media/Proxies/A001.mov", using: mappings) == "/mnt/proxies/A001.mov")
+        #expect(PathMapping.toEditor("/Volumes/NAS/x.mov", using: mappings) == "//server/nas/x.mov")
+        #expect(PathMapping.toEditor("/Volumes/MediaOther/x.mov", using: mappings) == "/Volumes/MediaOther/x.mov")
+    }
+
+    @Test func editorPathsComeBackToTheMac() {
+        #expect(PathMapping.toMac("/Z:/Media/Day 1/A001.mov", using: mappings) == "/Volumes/Media/Day 1/A001.mov")
+        #expect(PathMapping.toMac("z:\\media\\Day 1\\A001.mov", using: mappings) == "/Volumes/Media/Day 1/A001.mov")
+        #expect(PathMapping.toMac("/mnt/proxies/A001.mov", using: mappings) == "/Volumes/Media/Proxies/A001.mov")
+        #expect(PathMapping.toMac("//server/nas/x.mov", using: mappings) == "/Volumes/NAS/x.mov")
+        #expect(PathMapping.toMac("/somewhere/else.mov", using: mappings) == "/somewhere/else.mov")
+    }
+
+    @Test func exportsForAWindowsEditorUseItsDriveLetters() throws {
+        let asset = makeAsset("/Volumes/Media/Day 1/A001_C003.mov", start: 86400)
+        let clip = EditorClip(asset: asset, proxyPath: "/Volumes/Media/Proxies/A001_C003.mov")
+        let premiere = EditorExport.document(for: [clip], target: .premierePro, media: .sources, pathMappings: mappings)
+        #expect(premiere.contains("<pathurl>file://localhost/Z%3A/Media/Day%201/A001_C003.mov</pathurl>"))
+        let resolve = EditorExport.document(for: [clip], target: .davinciResolve, media: .proxies, pathMappings: mappings)
+        #expect(resolve.contains("src=\"file:///mnt/proxies/A001_C003.mov\""))
+        // And a timeline written on that Windows machine is understood on the way back.
+        let doc = try #require(TimelineDocument(text: premiere))
+        #expect(doc.references.first?.path.map { PathMapping.toMac($0, using: mappings) } == asset.sourcePath)
+    }
+
+    @Test func remountedVolumeCandidates() {
+        let candidates = VolumeRemapper.candidates(for: "/Volumes/Media/Day 1/A001.mov", volumesRoot: "/Volumes",
+                                                   mountedVolumes: ["Macintosh HD", "Media-1", "Backup", "Media"])
+        #expect(candidates == ["/Volumes/Media-1/Day 1/A001.mov", "/Volumes/Backup/Day 1/A001.mov",
+                               "/Volumes/Macintosh HD/Day 1/A001.mov"])
+        #expect(VolumeRemapper.candidates(for: "/Users/ed/A001.mov", volumesRoot: "/Volumes", mountedVolumes: ["Media"]).isEmpty)
+    }
+}
+
+@Suite struct FaceRegroupingTests {
+    private func faces(_ asset: String, _ vectors: [[Float]]) -> [FaceSighting] {
+        vectors.enumerated().map { i, v in
+            FaceSighting(assetID: asset, timeSeconds: Double(i), x: 0, y: 0, width: 1, height: 1,
+                         embedding: FaceSighting.data(from: v))
+        }
+    }
+
+    @Test func rerunningSameFacesKeepsPeople() throws {
+        let catalog = try Catalog.inMemory()
+        let asset = try catalog.save(makeAsset("/Volumes/RAID/A.mov"))
+        let vectors: [[Float]] = [[1, 0, 0], [0, 1, 0]]
+        try catalog.replaceAndGroupFaces(assetID: asset.id, with: faces(asset.id, vectors))
+        let first = Set(try catalog.people().map(\.id))
+        #expect(first.count == 2)
+        for _ in 0..<3 {
+            try catalog.replaceAndGroupFaces(assetID: asset.id, with: faces(asset.id, vectors))
+        }
+        #expect(Set(try catalog.people().map(\.id)) == first)
+        #expect(Set(try catalog.faces(forAsset: asset.id).compactMap(\.personID)) == first)
+    }
+
+    @Test func namedPersonSurvivesReanalysisOfTheirOnlyClip() throws {
+        let catalog = try Catalog.inMemory()
+        let asset = try catalog.save(makeAsset("/Volumes/RAID/A.mov"))
+        try catalog.replaceAndGroupFaces(assetID: asset.id, with: faces(asset.id, [[1, 0, 0]]))
+        let person = try #require(try catalog.people().first)
+        try catalog.rename(person: person, to: "Ada")
+        try catalog.replaceAndGroupFaces(assetID: asset.id, with: faces(asset.id, [[0.99, 0.05, 0]]))
+        let people = try catalog.people()
+        #expect(people.count == 1)
+        #expect(people.first?.id == person.id)
+        #expect(people.first?.name == "Ada")
+        #expect(try catalog.faces(forAsset: asset.id).first?.personID == person.id)
+    }
+
+    @Test func emptyUnnamedPeopleAreRemovedNamedKept() throws {
+        let catalog = try Catalog.inMemory()
+        let asset = try catalog.save(makeAsset("/Volumes/RAID/A.mov"))
+        let face = faces(asset.id, [[1, 0, 0]])[0]
+        try catalog.replaceFaces(assetID: asset.id, with: [face])
+        let used = Person(name: nil)
+        try catalog.assign(sightingIDs: [face.id], to: used)
+        try catalog.assign(sightingIDs: [], to: Person(name: nil))
+        try catalog.assign(sightingIDs: [], to: Person(name: "  "))
+        let named = Person(name: "Grace")
+        try catalog.assign(sightingIDs: [], to: named)
+        #expect(try catalog.deleteEmptyPeople() == 2)
+        #expect(Set(try catalog.people().map(\.id)) == [used.id, named.id])
     }
 }

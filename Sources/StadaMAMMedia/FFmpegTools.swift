@@ -19,7 +19,7 @@ public enum MediaError: Error, LocalizedError, Equatable {
         case .decoderUnavailable(let format):
             return "\(format.isEmpty ? "This format" : format) is catalogued, but decoding it needs the camera maker's SDK, which is not installed yet."
         case .isOwnProxy:
-            return "This file is a StadaXR A.I. MAM proxy, not a source."
+            return "This file is a StradaXR A.I. MAM proxy, not a source."
         }
     }
 }

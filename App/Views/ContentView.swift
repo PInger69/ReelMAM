@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Environment(AppModel.self) private var model
+    @Environment(CutsModel.self) private var cuts
 
     var body: some View {
         @Bindable var model = model
@@ -14,7 +15,10 @@ struct ContentView: View {
             LibraryGridView()
                 .navigationSplitViewColumnWidth(min: 300, ideal: 480)
         } detail: {
-            if let asset = model.selectedAsset {
+            if cuts.showsEditor, let sequence = cuts.open {
+                SequenceEditorView(sequence: sequence)
+                    .id(sequence.sequence.id)
+            } else if let asset = model.selectedAsset {
                 ClipDetailView(asset: asset)
                     .id(asset.id)
             } else {
@@ -37,6 +41,10 @@ struct ContentView: View {
                     Label("Make Proxies", systemImage: "bolt.fill")
                 }
                 .help("Render a proxy for every clip that does not have one")
+                Button { model.analyzeVisible() } label: {
+                    Label("Analyse", systemImage: "sparkles")
+                }
+                .help("Run every A.I. pass on the clips shown")
                 Menu {
                     SendToEditorMenu()
                 } label: {
@@ -53,7 +61,7 @@ struct ContentView: View {
             model.importMedia(at: urls.map(\.path))
             return true
         }
-        .alert("StadaXR A.I. MAM", isPresented: Binding(get: { model.alert != nil },
+        .alert("StradaXR A.I. MAM", isPresented: Binding(get: { model.alert != nil },
                                                         set: { if !$0 { model.alert = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -62,36 +70,164 @@ struct ContentView: View {
         .sheet(item: $model.recall) { report in
             RecallView(report: report)
         }
+        // Clips can leave the catalogue, or gain a proxy, while a sequence that uses them is open.
+        .onChange(of: model.revision) { cuts.reload() }
     }
 }
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @Environment(CutsModel.self) private var cuts
+    @State private var renaming: Bin?
+    @State private var renamingSequence: CutSequence?
+    @State private var newName = ""
 
     var body: some View {
         List(selection: Binding<LibraryFilter?>(get: { model.filter }, set: { model.select(filter: $0 ?? .all) })) {
             Section("Library") {
-                Label("All Clips", systemImage: "film.stack").tag(LibraryFilter.all)
+                Label("All Clips", systemImage: "film.stack").badge(model.assets.count).tag(LibraryFilter.all)
                 Label("Needs Proxy", systemImage: "hourglass").tag(LibraryFilter.needsProxy)
                 Label("Has Proxy", systemImage: "checkmark.seal").tag(LibraryFilter.hasProxy)
-                Label("Transcribed", systemImage: "captions.bubble").tag(LibraryFilter.transcribed)
+                Label("Dialogue Logged", systemImage: "captions.bubble").tag(LibraryFilter.transcribed)
+                if !model.offline.isEmpty {
+                    Label("Offline", systemImage: "exclamationmark.triangle")
+                        .badge(model.offline.count)
+                        .tag(LibraryFilter.offline)
+                        .contextMenu {
+                            Button("Locate Missing Originals…") { model.presentLocateMissingPanel() }
+                        }
+                }
+            }
+            Section {
+                OutlineGroup(model.binTree, children: \.children) { node in
+                    binRow(node.bin)
+                }
+                if model.bins.isEmpty {
+                    Text("Drag clips onto a bin, or save a search as a smart bin.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            } header: {
+                HStack {
+                    Text("Bins")
+                    Spacer()
+                    Button { startRenaming(model.newBin()) } label: { Image(systemName: "plus") }
+                        .buttonStyle(.plain)
+                        .help("New bin")
+                }
+            }
+            Section {
+                ForEach(cuts.sequences) { sequence in
+                    sequenceRow(sequence)
+                }
+                if cuts.sequences.isEmpty {
+                    Text("Mark in and out on a clip and add the range to a sequence.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            } header: {
+                HStack {
+                    Text("Sequences")
+                    Spacer()
+                    Button { if let sequence = cuts.newSequence() { startRenaming(sequence) } } label: { Image(systemName: "plus") }
+                        .buttonStyle(.plain)
+                        .help("New sequence")
+                }
+            }
+            if model.volumes.count > 1 || model.volumes.first?.name != "This Mac" {
+                Section("Locations") {
+                    ForEach(model.volumes, id: \.name) { volume in
+                        Label(volume.name, systemImage: volume.name == "This Mac" ? "laptopcomputer" : "externaldrive")
+                            .badge(volume.count)
+                            .tag(LibraryFilter.volume(volume.name))
+                    }
+                }
             }
             if !model.people.isEmpty {
                 Section("People") {
                     ForEach(Array(model.people.enumerated()), id: \.element.id) { index, person in
-                        Label(person.name ?? "Unnamed person \(index + 1)",
-                              systemImage: person.name == nil ? "person.crop.circle.badge.questionmark" : "person.crop.circle")
-                            .tag(LibraryFilter.person(person.id))
+                        Label {
+                            Text(person.name ?? "Unnamed person \(index + 1)")
+                        } icon: {
+                            PersonPortrait(person: person)
+                        }
+                        .tag(LibraryFilter.person(person.id))
                     }
                 }
             }
         }
         .listStyle(.sidebar)
+        .alert("Name Bin", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Save") {
+                if let bin = renaming { model.rename(bin, to: newName) }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        }
+        .alert("Name Sequence", isPresented: Binding(get: { renamingSequence != nil }, set: { if !$0 { renamingSequence = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Save") {
+                if let sequence = renamingSequence { cuts.rename(sequence, to: newName) }
+                renamingSequence = nil
+            }
+            Button("Cancel", role: .cancel) { renamingSequence = nil }
+        }
+    }
+
+    /// A sequence opens in the detail area when clicked; the clips shown beside it stay as they are.
+    private func sequenceRow(_ sequence: CutSequence) -> some View {
+        let isOpen = cuts.open?.sequence.id == sequence.id
+        return Button { cuts.open(id: sequence.id) } label: {
+            Label(sequence.name, systemImage: "timeline.selection")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .badge(cuts.cutCounts[sequence.id] ?? 0)
+        .listRowBackground(isOpen ? RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .fill(Color.accentColor.opacity(cuts.showsEditor ? 0.35 : 0.15)).padding(.horizontal, 10) : nil)
+        .help(isOpen ? "Open sequence: marked ranges are added here" : "Open this sequence")
+        .contextMenu {
+            Button("Rename…") { startRenaming(sequence) }
+            Button("Duplicate") { cuts.duplicate(sequence) }
+            Divider()
+            Button("Delete Sequence", role: .destructive) { cuts.delete(sequence) }
+        }
+    }
+
+    private func startRenaming(_ sequence: CutSequence) {
+        newName = sequence.name
+        renamingSequence = sequence
+    }
+
+    private func binRow(_ bin: Bin) -> some View {
+        Label(bin.name, systemImage: bin.isSmart ? "sparkle.magnifyingglass" : "folder")
+            .badge(model.binCounts[bin.id] ?? 0)
+            .tag(LibraryFilter.bin(bin.id))
+            .dropDestination(for: URL.self) { urls, _ in
+                model.add(paths: urls.map(\.path), to: bin)
+                return !bin.isSmart
+            }
+            .contextMenu {
+                if !bin.isSmart {
+                    Button("New Bin Inside") { startRenaming(model.newBin(inside: bin)) }
+                }
+                Button("Rename…") { startRenaming(bin) }
+                Divider()
+                Button("Delete Bin", role: .destructive) { model.delete(bin) }
+            }
+    }
+
+    private func startRenaming(_ bin: Bin) {
+        newName = bin.name
+        renaming = bin
     }
 }
 
 struct LibraryGridView: View {
     @Environment(AppModel.self) private var model
+    @Environment(CutsModel.self) private var cuts
     private let columns = [GridItem(.adaptive(minimum: 200, maximum: 320), spacing: 16)]
 
     var body: some View {
@@ -109,23 +245,45 @@ struct LibraryGridView: View {
                 ContentUnavailableView.search(text: model.searchText)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 18) {
-                        ForEach(assets) { asset in
-                            AssetCard(asset: asset)
-                                .onTapGesture { select(asset) }
-                                .contextMenu { AssetActions(asset: asset) }
+                    LazyVGrid(columns: columns, spacing: 18, pinnedViews: [.sectionHeaders]) {
+                        ForEach(model.visibleGroups) { group in
+                            Section {
+                                ForEach(group.assets) { asset in
+                                    AssetCard(asset: asset)
+                                        .onTapGesture { select(asset) }
+                                        // Drag a clip onto a bin, or straight into an editing app.
+                                        .draggable(URL(fileURLWithPath: asset.sourcePath))
+                                        .contextMenu { AssetActions(asset: asset) }
+                                }
+                            } header: {
+                                if !group.title.isEmpty {
+                                    HStack {
+                                        Text(group.title).font(.headline)
+                                        Text("\(group.assets.count)").foregroundStyle(.secondary)
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 5)
+                                    .background(.bar, in: RoundedRectangle(cornerRadius: 6))
+                                }
+                            }
                         }
                     }
                     .padding(16)
                 }
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !model.assets.isEmpty { LibraryBar() }
+        }
         .background(Color(nsColor: .underPageBackgroundColor))
-        .navigationTitle("Library")
+        .navigationTitle(model.currentBin?.name ?? "Library")
         .navigationSubtitle("\(assets.count) clip\(assets.count == 1 ? "" : "s")")
     }
 
     private func select(_ asset: Asset) {
+        // While a sequence is on screen the clip opens inside it, above the storyboard, ready to
+        // keep parts of.
         model.selectedID = asset.id
         // Jump straight to the moment that matched the search.
         model.pendingSeekSeconds = model.bestHit(for: asset.id)?.timeSeconds
@@ -144,8 +302,21 @@ struct AssetActions: View {
             }
         }
         Button("Analyse with A.I.") { model.analyze(asset) }
+        Menu("Add to Bin") {
+            ForEach(model.bins.filter { !$0.isSmart }) { bin in
+                Button(bin.name) { model.add(asset, to: bin) }
+            }
+            if model.bins.contains(where: { !$0.isSmart }) { Divider() }
+            Button("New Bin") { model.add(asset, to: model.newBin()) }
+        }
+        if let bin = model.currentBin, !bin.isSmart {
+            Button("Remove from “\(bin.name)”") { model.remove(asset, from: bin) }
+        }
         Divider()
         Button("Reveal Source in Finder") { model.revealInFinder(asset.sourcePath) }
+        if model.offline.contains(asset.id) {
+            Button("Locate Missing Originals…") { model.presentLocateMissingPanel() }
+        }
     }
 }
 
@@ -155,7 +326,7 @@ struct AssetCard: View {
     @State private var hoverFraction: CGFloat?
 
     var body: some View {
-        let thumbnails = model.thumbnailPaths[asset.id] ?? []
+        let thumbnails = model.thumbnails(for: asset)
         let isSelected = model.selectedID == asset.id
         VStack(alignment: .leading, spacing: 6) {
             GeometryReader { proxy in
@@ -234,6 +405,7 @@ struct AssetCard: View {
             HStack(spacing: 4) {
                 Badge(text: (asset.videoCodec ?? asset.container ?? "clip").uppercased())
                 if !asset.decodePath.canRender { Badge(text: "RAW", tint: .orange) }
+                if model.offline.contains(asset.id) { Badge(text: "OFFLINE", tint: .red) }
                 if model.hasProxy(asset) { Badge(text: "PROXY", tint: .green) }
                 Spacer()
             }
@@ -322,5 +494,58 @@ struct SendToEditorMenu: View {
                 }
             }
         }
+    }
+}
+
+/// Sort and group controls above the clips, and "save as smart bin" while searching.
+struct LibraryBar: View {
+    @Environment(AppModel.self) private var model
+
+    /// How far a large import or batch run has got.
+    @ViewBuilder private var progress: some View {
+        if let importing = model.importProgress {
+            ProgressView(value: Double(importing.done), total: Double(max(importing.total, 1))) {
+                Text("Importing \(importing.done.formatted()) of \(importing.total.formatted())")
+            }
+            .progressViewStyle(.linear).frame(maxWidth: 260)
+        }
+        if let queue = model.queueProgress {
+            ProgressView(value: Double(queue.done), total: Double(max(queue.total, 1))) {
+                Text("\(queue.title) \(queue.done.formatted()) of \(queue.total.formatted())")
+            }
+            .progressViewStyle(.linear).frame(maxWidth: 260)
+        }
+    }
+
+    var body: some View {
+        @Bindable var model = model
+        HStack(spacing: 12) {
+            if model.isSearching {
+                Text("\(model.visibleAssets.count) result\(model.visibleAssets.count == 1 ? "" : "s")")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    model.saveSearchAsSmartBin()
+                } label: {
+                    Label("Save as Smart Bin", systemImage: "sparkle.magnifyingglass")
+                }
+                .help("Keep this search as a bin that updates itself")
+            } else {
+                progress
+                Picker("Sort", selection: $model.sort) {
+                    ForEach(LibrarySort.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .fixedSize()
+                Picker("Group", selection: $model.grouping) {
+                    ForEach(LibraryGrouping.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .fixedSize()
+                Spacer()
+            }
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(.bar)
     }
 }

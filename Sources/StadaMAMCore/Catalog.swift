@@ -16,7 +16,19 @@ public final class Catalog: Sendable {
     public let db: DatabaseQueue
 
     public init(path: String) throws {
-        db = try DatabaseQueue(path: path)
+        var configuration = Configuration()
+        // A catalogue of a whole feature's footage is large and written to while it is read:
+        // write-ahead logging keeps the interface responsive during imports and analysis.
+        configuration.prepareDatabase { db in
+            try db.execute(sql: """
+                PRAGMA journal_mode = WAL;
+                PRAGMA synchronous = NORMAL;
+                PRAGMA cache_size = -262144;
+                PRAGMA mmap_size = 1073741824;
+                PRAGMA temp_store = MEMORY;
+                """)
+        }
+        db = try DatabaseQueue(path: path, configuration: configuration)
         try Self.migrator.migrate(db)
     }
 
@@ -135,6 +147,79 @@ public final class Catalog: Sendable {
                 t.add(column: "mismatch", .text)
             }
         }
+        migrator.registerMigration("v5-source-fingerprint") { db in
+            try db.alter(table: "asset") { t in
+                t.add(column: "fingerprint", .text)
+            }
+            try db.create(index: "asset_fingerprint", on: "asset", columns: ["fingerprint"])
+        }
+        migrator.registerMigration("v6-bins") { db in
+            try db.create(table: "bin") { t in
+                t.column("id", .text).primaryKey()
+                t.column("name", .text).notNull()
+                t.column("parentID", .text).indexed().references("bin", onDelete: .cascade)
+                t.column("smartQuery", .text)
+                t.column("sortIndex", .integer).notNull()
+                t.column("createdAt", .datetime).notNull()
+            }
+            try db.create(table: "binItem") { t in
+                t.column("binID", .text).notNull().references("bin", onDelete: .cascade)
+                t.column("assetID", .text).notNull().indexed().references("asset", onDelete: .cascade)
+                t.column("addedAt", .datetime).notNull()
+                t.primaryKey(["binID", "assetID"])
+            }
+        }
+        migrator.registerMigration("v7-editable-tags-and-scale") { db in
+            try db.alter(table: "sceneTag") { t in
+                t.add(column: "userEdited", .boolean).notNull().defaults(to: false)
+            }
+            try db.create(table: "labelRule") { t in
+                t.column("id", .text).primaryKey()
+                t.column("match", .text).notNull().unique()
+                t.column("action", .text).notNull()
+                t.column("replacement", .text).notNull().defaults(to: "")
+                t.column("isDefault", .boolean).notNull().defaults(to: false)
+            }
+            try db.create(table: "catalogSetting") { t in
+                t.column("key", .text).primaryKey()
+                t.column("value", .text).notNull()
+            }
+            // Indexes for a library of hundreds of thousands of clips.
+            try db.create(index: "asset_importedAt", on: "asset", columns: ["importedAt"])
+            try db.create(index: "asset_volumeName", on: "asset", columns: ["volumeName"])
+            try db.create(index: "asset_reelName", on: "asset", columns: ["reelName"])
+            try db.create(index: "proxy_status", on: "proxy", columns: ["status", "assetID"])
+            try db.create(index: "sceneTag_asset_kind", on: "sceneTag", columns: ["assetID", "kind"])
+        }
+        migrator.registerMigration("v8-sequences-and-looks") { db in
+            try db.create(table: "sequence") { t in
+                t.column("id", .text).primaryKey()
+                t.column("name", .text).notNull()
+                t.column("frameRateNum", .integer)
+                t.column("frameRateDen", .integer)
+                t.column("dropFrame", .boolean).notNull()
+                t.column("startTimecode", .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+                t.column("modifiedAt", .datetime).notNull()
+            }
+            try db.create(table: "sequenceCut") { t in
+                t.column("id", .text).primaryKey()
+                t.column("sequenceID", .text).notNull().references("sequence", onDelete: .cascade)
+                t.column("assetID", .text).notNull().indexed().references("asset", onDelete: .cascade)
+                t.column("position", .integer).notNull()
+                t.column("inFrame", .integer).notNull()
+                t.column("outFrame", .integer).notNull()
+                t.column("note", .text).notNull()
+            }
+            try db.create(index: "sequenceCut_order", on: "sequenceCut", columns: ["sequenceID", "position"])
+            // The viewing look chosen for a clip. No row means "choose from the clip's metadata".
+            try db.create(table: "clipLook") { t in
+                t.column("assetID", .text).primaryKey().references("asset", onDelete: .cascade)
+                t.column("mode", .text).notNull()
+                t.column("conversion", .text)
+                t.column("lutPath", .text)
+            }
+        }
         return migrator
     }
 
@@ -145,8 +230,14 @@ public final class Catalog: Sendable {
     public func save(_ asset: Asset) throws -> Asset {
         try db.write { db in
             var asset = asset
-            if let existing = try Asset.filter(Column("sourcePath") == asset.sourcePath).fetchOne(db),
-               existing.id != asset.id {
+            // The same path, or the same content at a new path, is the same clip: keep its
+            // identity so proxies, markers and A.I. metadata stay attached.
+            var existing = try Asset.filter(Column("sourcePath") == asset.sourcePath).fetchOne(db)
+            if existing == nil, let fingerprint = asset.fingerprint {
+                existing = try Asset.filter(Column("fingerprint") == fingerprint).fetchAll(db)
+                    .first { !FileManager.default.fileExists(atPath: $0.sourcePath) }
+            }
+            if let existing, existing.id != asset.id {
                 asset.id = existing.id
                 asset.importedAt = existing.importedAt
                 asset.rating = existing.rating
@@ -229,7 +320,9 @@ public final class Catalog: Sendable {
 
     public func replaceTags(assetID: String, kinds: [TagKind], with tags: [SceneTag]) throws {
         try db.write { db in
-            _ = try SceneTag.filter(Column("assetID") == assetID && kinds.map(\.rawValue).contains(Column("kind")))
+            // Tags a person added or corrected survive re-analysis.
+            _ = try SceneTag.filter(Column("assetID") == assetID && kinds.map(\.rawValue).contains(Column("kind"))
+                                    && Column("userEdited") == false)
                 .deleteAll(db)
             for tag in tags { try tag.insert(db) }
             try Self.reindex(db, assetID: assetID)
@@ -253,6 +346,21 @@ public final class Catalog: Sendable {
 
     public func allFaces() throws -> [FaceSighting] {
         try db.read { try FaceSighting.fetchAll($0) }
+    }
+
+    /// A handful of already-grouped sightings for every person, enough to recognise them in a
+    /// new clip without loading every face in the catalogue.
+    public func faceReferences(perPerson limit: Int = 24) throws -> [FaceSighting] {
+        try db.read { db in
+            try FaceSighting.fetchAll(db, sql: """
+                SELECT * FROM faceSighting WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (PARTITION BY personID ORDER BY timeSeconds) AS n
+                        FROM faceSighting WHERE personID IS NOT NULL
+                    ) WHERE n <= ?
+                )
+                """, arguments: [limit])
+        }
     }
 
     public func people() throws -> [Person] {
@@ -319,7 +427,7 @@ public final class Catalog: Sendable {
         }
     }
 
-    private static func reindex(_ db: Database, assetID: String) throws {
+    static func reindex(_ db: Database, assetID: String) throws {
         try db.execute(sql: "DELETE FROM searchIndex WHERE assetID = ?", arguments: [assetID])
         guard let asset = try Asset.fetchOne(db, key: assetID) else { return }
         func add(_ kind: SearchHit.Kind, _ time: Double?, _ text: String) throws {

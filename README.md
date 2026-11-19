@@ -1,4 +1,4 @@
-# StadaXR A.I. MAM
+# StradaXR A.I. MAM
 
 A visually rich media asset manager for macOS. Catalogue every clip, generate proxies that
 always lead back to the camera original, mark and scrub fast, and search footage by what is
@@ -20,10 +20,30 @@ said and shown in it.
 | FFmpeg as an optional extra for formats Apple's frameworks cannot open | Built, tested |
 | Source recall: from a proxy file, or from a Premiere XML / Resolve FCPXML / EDL, back to the high-res source | Built, tested |
 | Send to Editor: clip lists with timecode, reel, markers and subclips as FCPXML (Final Cut Pro, DaVinci Resolve) or XML (Premiere Pro), pointing at originals or at proxies only | Built; structure tested, not yet imported into the three apps |
+| Finding originals that were moved or renamed, by content fingerprint; re-importing a moved original keeps its markers, proxies and A.I. data | Built, tested |
+| Proxies made automatically on import; clips can be dragged from the library into an editing app | Built; not yet tried by hand |
+| Bins: nested bins, smart bins saved from a search, drag clips in; sort and group by volume, folder, reel, day or format; a Locations list of drives and shares | Built; logic tested, interface verified only by the CI screenshot |
+| Network storage: shares remounted under another name are re-found automatically; path mappings translate this Mac's paths to and from an editor's Windows or Linux computer | Built, tested with simulated volumes |
+| More on-device A.I.: names of people, places and organisations in the speech, sound classification, animals, and how many people are in frame | Built; runs in the macOS tests on synthetic clips, not yet judged on real footage |
+| External A.I. hooks: a service of your choice receives each clip's transcript and tags (never the media) and can return a summary and extra tags | Built; request and reply handling tested, not yet run against a live service |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
+| Cuts editor: named sequences of cuts, played through from proxies; export as a timeline (FCPXML, Premiere XML, EDL) linked to the camera originals, or as a package with the originals copied and checked; a Rec.709 viewing look for log footage and `.cube` LUTs. See `docs/cuts-editor.md` | Model, exports, package, playback and look built and tested; the editor screen compiles but has not been run by hand; nothing imported into an editing app or tried on camera footage yet |
 | Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |
 | macOS app: library grid with hover scrub, player with JKL shuttle, frame stepping, mark in / out, markers and subclips, inspector | Written; verified only by the macOS CI build, not yet run by hand |
 | On-device A.I. (Apple Vision and Speech): speech-to-text, shot detection, scene / object labels, on-screen text, face grouping | Written; verified only by the macOS CI build, not yet run on real footage |
+
+## Cinema logging, editable labels and scale
+
+- **Dialogue** reads every live microphone channel (not just channels 1 and 2), cuts at quiet
+  moments into short stretches, skips room tone, and is primed with set vocabulary plus the
+  character names you give it (Settings › Dialogue & Storage). Slates ("scene 12A, take 3") become tags.
+- **Picture labels** speak cinema: framing (single, two-shot, group), shot size (close-up to
+  extreme wide), INT./EXT. Right-click any tag in the Coverage tab to rename or delete it; hide
+  or reword a label across the whole catalogue in Settings › Picture Labels. Hand edits survive re-analysis.
+- **Scale**: write-ahead-logged catalogue with indexes, resumable bulk import that skips clips already
+  catalogued, lazy thumbnails, background offline checks, analysis and proxy runs queued a few at a
+  time, adaptive frame sampling for long clips, and a proxy folder you can point at a large volume.
+  Not yet measured against a real 200 TB library.
 
 ## How source recall works
 
@@ -71,6 +91,17 @@ sources, ready for online / conform.
 - `Sources/StadaMAMAI` — macOS-only Vision and Speech analysis.
 - `App` — the SwiftUI macOS app.
 - `Tests` — unit tests plus end-to-end tests that run real FFmpeg.
+
+## Running a build without Xcode
+
+Every build on GitHub packages the app. On the repository's **Actions** tab, open the latest
+successful run and download the **StradaXR-AI-MAM** artifact. Unzip it twice to get
+`StadaMAM.app`, move it to Applications, then clear the download quarantine once, because the
+build is not signed with an Apple Developer ID:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/StadaMAM.app
+```
 
 ## Building
 

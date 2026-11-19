@@ -9,6 +9,7 @@ enum LibraryFilter: Hashable {
     case needsProxy
     case hasProxy
     case transcribed
+    case offline
     case person(String)
 }
 
@@ -46,6 +47,14 @@ final class AppModel {
             library?.naming = proxyNaming
         }
     }
+    /// Render a proxy for every clip as soon as it is imported.
+    var makesProxiesOnImport: Bool {
+        didSet { UserDefaults.standard.set(makesProxiesOnImport, forKey: "makesProxiesOnImport") }
+    }
+    /// The preset used for automatic and one-click proxies.
+    var defaultPreset: ProxyPreset {
+        didSet { UserDefaults.standard.set(defaultPreset.rawValue, forKey: "defaultPreset") }
+    }
     /// Renders run a few at a time so the media engine is kept busy without being oversubscribed.
     private let renderLimiter = JobLimiter(limit: MediaLibrary.recommendedConcurrentRenders)
 
@@ -67,6 +76,8 @@ final class AppModel {
 
     private(set) var withProxy: Set<String> = []
     private(set) var withTranscript: Set<String> = []
+    /// Clips whose original is not currently reachable (moved, renamed, or volume not mounted).
+    private(set) var offline: Set<String> = []
     private(set) var personAssets: Set<String> = []
     private(set) var thumbnailPaths: [String: [String]] = [:]
 
@@ -80,6 +91,9 @@ final class AppModel {
 
         let naming = UserDefaults.standard.string(forKey: "proxyNaming").flatMap(ProxyNaming.init(rawValue:)) ?? .sameName
         proxyNaming = naming
+        makesProxiesOnImport = UserDefaults.standard.object(forKey: "makesProxiesOnImport") as? Bool ?? true
+        defaultPreset = UserDefaults.standard.string(forKey: "defaultPreset").flatMap(ProxyPreset.init(rawValue:))
+            ?? .proResProxyHalf
         var startupProblem: String?
         do {
             catalog = try Catalog(path: support.appendingPathComponent("Catalog.sqlite").path)
@@ -118,6 +132,7 @@ final class AppModel {
         case .needsProxy: return assets.filter { !withProxy.contains($0.id) }
         case .hasProxy: return assets.filter { withProxy.contains($0.id) }
         case .transcribed: return assets.filter { withTranscript.contains($0.id) }
+        case .offline: return assets.filter { offline.contains($0.id) }
         case .person: return assets.filter { personAssets.contains($0.id) }
         }
     }
@@ -134,6 +149,8 @@ final class AppModel {
             people = try catalog.people()
             withProxy = try catalog.assetIDsWithReadyProxy()
             withTranscript = try catalog.assetIDsWithTranscript()
+            offline = Set(assets.filter { !FileManager.default.fileExists(atPath: $0.sourcePath) }.map(\.id))
+            if offline.isEmpty, filter == .offline { filter = .all }
             if case .person(let id) = filter { personAssets = try catalog.assetIDs(forPerson: id) }
             if let library {
                 thumbnailPaths = Dictionary(uniqueKeysWithValues: assets.map {
@@ -183,6 +200,7 @@ final class AppModel {
                     await self.setActivity(asset.id, Activity(title: "Thumbnails"))
                     _ = try? await library.makeThumbnails(for: asset)
                     await self.setActivity(asset.id, nil)
+                    await self.makeProxyAfterImport(asset)
                 } catch MediaError.isOwnProxy {
                     continue
                 } catch {
@@ -193,6 +211,34 @@ final class AppModel {
             if !failures.isEmpty {
                 let shown = failures.prefix(8).joined(separator: "\n")
                 await self.show("Some files could not be imported:\n\(shown)")
+            }
+        }
+    }
+
+    private func makeProxyAfterImport(_ asset: Asset) {
+        guard makesProxiesOnImport, asset.decodePath.canRender, !withProxy.contains(asset.id) else { return }
+        makeProxy(for: asset, preset: defaultPreset)
+    }
+
+    // MARK: Missing originals
+
+    /// Asks for a folder or volume and re-finds originals that were moved or renamed.
+    func presentLocateMissingPanel() {
+        guard let library else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.prompt = "Search"
+        panel.message = "Choose the folder or volume to search for missing originals. They are matched by content, so renamed files are found too."
+        guard panel.runModal() == .OK, let folder = panel.url?.path else { return }
+        let missing = offline.count
+        Task.detached(priority: .userInitiated) {
+            do {
+                let found = try library.locateMissingSources(under: folder)
+                await self.reload()
+                await self.show("Found \(found.count) of \(missing) missing original\(missing == 1 ? "" : "s").")
+            } catch {
+                await self.show(error.localizedDescription)
             }
         }
     }

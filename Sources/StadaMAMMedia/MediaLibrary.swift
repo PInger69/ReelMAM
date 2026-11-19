@@ -108,15 +108,51 @@ public struct MediaLibrary: Sendable {
         let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.int64Value ?? 0
         let probed = await probe(path: path)
         if let id = probed.embeddedAssetID { throw MediaError.isOwnProxy(assetID: id) }
+        let fingerprint = SourceFingerprint.compute(path: path)
         if var asset = probed.asset {
             if asset.fileSize == 0 { asset.fileSize = size }
+            asset.fingerprint = fingerprint
             return try catalog.save(asset)
         }
         // The container could not be read at all, or exposes no picture stream.
         guard FormatIdentity.importableExtensions.contains(ext.lowercased()) else { throw MediaError.noVideoStream(path) }
         let identity = FormatIdentity.identify(fileExtension: ext, canDecode: false, vendor: probed.vendorHint)
-        return try catalog.save(Asset(sourcePath: path, fileSize: size, decodePath: identity.decodePath,
-                                      container: ext.lowercased(), formatName: identity.name, scan: .unknown))
+        var asset = Asset(sourcePath: path, fileSize: size, decodePath: identity.decodePath,
+                          container: ext.lowercased(), formatName: identity.name, scan: .unknown)
+        asset.fingerprint = fingerprint
+        return try catalog.save(asset)
+    }
+
+    // MARK: Missing originals
+
+    /// Clips whose original file is not where the catalog says it is.
+    public func offlineAssets() throws -> [Asset] {
+        try catalog.allAssets().filter { !FileManager.default.fileExists(atPath: $0.sourcePath) }
+    }
+
+    /// Looks under a folder for originals that have moved or been renamed and points their
+    /// clips at the new location. Matching is by content, so the name does not matter.
+    /// Returns the clips that were found.
+    @discardableResult
+    public func locateMissingSources(under folder: String) throws -> [Asset] {
+        let missing = try offlineAssets().filter { $0.fingerprint != nil }
+        guard !missing.isEmpty else { return [] }
+        var bySize: [Int64: [Asset]] = [:]
+        for asset in missing {
+            if let size = asset.fingerprint.flatMap(SourceFingerprint.size(of:)) { bySize[size, default: []].append(asset) }
+        }
+        var found: [Asset] = []
+        var claimed = Set<String>()
+        for file in Self.mediaFiles(at: folder) {
+            let size = ((try? FileManager.default.attributesOfItem(atPath: file))?[.size] as? NSNumber)?.int64Value ?? -1
+            // Only files of exactly the right size are worth hashing.
+            guard let candidates = bySize[size], let fingerprint = SourceFingerprint.compute(path: file),
+                  let match = candidates.first(where: { $0.fingerprint == fingerprint && !claimed.contains($0.id) })
+            else { continue }
+            claimed.insert(match.id)
+            found.append(try catalog.save(match.relocated(to: file)))
+        }
+        return found
     }
 
     // MARK: Proxies

@@ -55,6 +55,13 @@ private func makeAsset(_ path: String, start: Int = 0, duration: Int = 240, reel
         #expect(try catalog.allAssets().count == 1)
     }
 
+    @Test func relocatedClipTakesItsNewNameAndVolume() {
+        let moved = makeAsset("/Volumes/RAID/Day1/A001.mov").relocated(to: "/Volumes/ARCHIVE/2026/take 3.mov")
+        #expect(moved.fileName == "take 3.mov")
+        #expect(moved.volumeName == "ARCHIVE")
+        #expect(makeAsset("/Volumes/RAID/A.mov").relocated(to: "/Users/ed/A.mov").volumeName == nil)
+    }
+
     @Test func searchAcrossNamesTranscriptsTagsAndMarkers() throws {
         let catalog = try Catalog.inMemory()
         let interview = try catalog.save(makeAsset("/Volumes/RAID/Interview_Mayor.mov"))

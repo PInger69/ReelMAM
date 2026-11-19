@@ -75,6 +75,13 @@ struct SidebarView: View {
                 Label("Needs Proxy", systemImage: "hourglass").tag(LibraryFilter.needsProxy)
                 Label("Has Proxy", systemImage: "checkmark.seal").tag(LibraryFilter.hasProxy)
                 Label("Transcribed", systemImage: "captions.bubble").tag(LibraryFilter.transcribed)
+                if !model.offline.isEmpty {
+                    Label("Offline (\(model.offline.count))", systemImage: "exclamationmark.triangle")
+                        .tag(LibraryFilter.offline)
+                        .contextMenu {
+                            Button("Locate Missing Originals…") { model.presentLocateMissingPanel() }
+                        }
+                }
             }
             if !model.people.isEmpty {
                 Section("People") {
@@ -113,6 +120,8 @@ struct LibraryGridView: View {
                         ForEach(assets) { asset in
                             AssetCard(asset: asset)
                                 .onTapGesture { select(asset) }
+                                // Drag a clip straight into an editing app's bin or timeline.
+                                .draggable(URL(fileURLWithPath: asset.sourcePath))
                                 .contextMenu { AssetActions(asset: asset) }
                         }
                     }
@@ -146,6 +155,9 @@ struct AssetActions: View {
         Button("Analyse with A.I.") { model.analyze(asset) }
         Divider()
         Button("Reveal Source in Finder") { model.revealInFinder(asset.sourcePath) }
+        if model.offline.contains(asset.id) {
+            Button("Locate Missing Originals…") { model.presentLocateMissingPanel() }
+        }
     }
 }
 
@@ -234,6 +246,7 @@ struct AssetCard: View {
             HStack(spacing: 4) {
                 Badge(text: (asset.videoCodec ?? asset.container ?? "clip").uppercased())
                 if !asset.decodePath.canRender { Badge(text: "RAW", tint: .orange) }
+                if model.offline.contains(asset.id) { Badge(text: "OFFLINE", tint: .red) }
                 if model.hasProxy(asset) { Badge(text: "PROXY", tint: .green) }
                 Spacer()
             }

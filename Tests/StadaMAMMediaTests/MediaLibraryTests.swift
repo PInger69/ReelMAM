@@ -188,6 +188,50 @@ struct MediaLibraryTests {
     }
     #endif
 
+    @Test func movedAndRenamedOriginalsAreFoundAgain() async throws {
+        let library = try makeLibrary()
+        let original = try makeSource("M001_C001.mov")
+        let other = try makeSource("M001_C002.mov", timecode: "02:00:00;00")
+        let asset = try await library.importFile(at: original)
+        _ = try await library.importFile(at: other)
+        try library.catalog.save(Marker(assetID: asset.id, inFrame: 10, name: "Keep me"))
+        let proxy = try await library.makeProxy(for: asset, preset: .h264_720)
+        #expect(try library.offlineAssets().isEmpty)
+
+        // The drive is reorganised: the clip is renamed and moved to another folder.
+        let archive = root + "/Volumes/ARCHIVE/2026/Reel 1"
+        try FileManager.default.createDirectory(atPath: archive, withIntermediateDirectories: true)
+        let moved = archive + "/interview_take3.mov"
+        try FileManager.default.moveItem(atPath: original, toPath: moved)
+        #expect(try library.offlineAssets().map(\.id) == [asset.id])
+
+        let found = try library.locateMissingSources(under: root + "/Volumes/ARCHIVE")
+        #expect(found.map(\.id) == [asset.id])
+        let relocated = try #require(try library.catalog.asset(id: asset.id))
+        #expect(relocated.sourcePath == moved)
+        #expect(relocated.fileName == "interview_take3.mov")
+        #expect(try library.offlineAssets().isEmpty)
+        // Everything attached to the clip is still attached, and the proxy still leads to it.
+        #expect(try library.catalog.markers(forAsset: asset.id).map(\.name) == ["Keep me"])
+        #expect(try await library.source(forFileAt: proxy.path).asset?.sourcePath == moved)
+        #expect(try library.catalog.allAssets().count == 2)
+    }
+
+    @Test func reimportingAMovedOriginalKeepsItsIdentity() async throws {
+        let library = try makeLibrary()
+        let original = try makeSource("R001_C001.mov")
+        let asset = try await library.importFile(at: original)
+        let moved = root + "/Volumes/RAID/Day 1/renamed.mov"
+        try FileManager.default.moveItem(atPath: original, toPath: moved)
+        let again = try await library.importFile(at: moved)
+        #expect(again.id == asset.id)
+        #expect(try library.catalog.allAssets().count == 1)
+        // A genuine copy alongside a present original is a separate clip.
+        let copy = root + "/Volumes/RAID/Day 1/copy.mov"
+        try FileManager.default.copyItem(atPath: moved, toPath: copy)
+        #expect(try await library.importFile(at: copy).id != asset.id)
+    }
+
     @Test func limiterRunsJobsInTurn() async {
         let limiter = JobLimiter(limit: 2)
         let running = ProgressBox(), peak = ProgressBox()

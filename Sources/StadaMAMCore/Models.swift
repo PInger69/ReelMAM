@@ -29,6 +29,8 @@ public struct Asset: Codable, Identifiable, Hashable, Sendable, FetchableRecord,
     public var fileSize: Int64
     /// Security-scoped bookmark so the source can be found again after it moves or the volume remounts.
     public var bookmark: Data?
+    /// Content fingerprint used to find the file again after it moves. See `SourceFingerprint`.
+    public var fingerprint: String?
     public var decodePath: DecodePath
     public var container: String?
     public var videoCodec: String?
@@ -90,6 +92,16 @@ public struct Asset: Codable, Identifiable, Hashable, Sendable, FetchableRecord,
         self.importedAt = importedAt
         self.rating = rating
         self.notes = notes
+    }
+
+    /// The same clip at a new location.
+    public func relocated(to path: String) -> Asset {
+        var copy = self
+        copy.sourcePath = path
+        copy.fileName = (path as NSString).lastPathComponent
+        let parts = path.split(separator: "/")
+        copy.volumeName = parts.first == "Volumes" && parts.count > 1 ? String(parts[1]) : nil
+        return copy
     }
 
     public var frameRate: FrameRate { FrameRate(frameRateNum, frameRateDen) }

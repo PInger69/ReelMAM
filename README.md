@@ -20,6 +20,8 @@ said and shown in it.
 | FFmpeg as an optional extra for formats Apple's frameworks cannot open | Built, tested |
 | Source recall: from a proxy file, or from a Premiere XML / Resolve FCPXML / EDL, back to the high-res source | Built, tested |
 | Send to Editor: clip lists with timecode, reel, markers and subclips as FCPXML (Final Cut Pro, DaVinci Resolve) or XML (Premiere Pro), pointing at originals or at proxies only | Built; structure tested, not yet imported into the three apps |
+| Finding originals that were moved or renamed, by content fingerprint; re-importing a moved original keeps its markers, proxies and A.I. data | Built, tested |
+| Proxies made automatically on import; clips can be dragged from the library into an editing app | Built; not yet tried by hand |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
 | Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |
 | macOS app: library grid with hover scrub, player with JKL shuttle, frame stepping, mark in / out, markers and subclips, inspector | Written; verified only by the macOS CI build, not yet run by hand |

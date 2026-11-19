@@ -135,6 +135,12 @@ public final class Catalog: Sendable {
                 t.add(column: "mismatch", .text)
             }
         }
+        migrator.registerMigration("v5-source-fingerprint") { db in
+            try db.alter(table: "asset") { t in
+                t.add(column: "fingerprint", .text)
+            }
+            try db.create(index: "asset_fingerprint", on: "asset", columns: ["fingerprint"])
+        }
         return migrator
     }
 
@@ -145,8 +151,14 @@ public final class Catalog: Sendable {
     public func save(_ asset: Asset) throws -> Asset {
         try db.write { db in
             var asset = asset
-            if let existing = try Asset.filter(Column("sourcePath") == asset.sourcePath).fetchOne(db),
-               existing.id != asset.id {
+            // The same path, or the same content at a new path, is the same clip: keep its
+            // identity so proxies, markers and A.I. metadata stay attached.
+            var existing = try Asset.filter(Column("sourcePath") == asset.sourcePath).fetchOne(db)
+            if existing == nil, let fingerprint = asset.fingerprint {
+                existing = try Asset.filter(Column("fingerprint") == fingerprint).fetchAll(db)
+                    .first { !FileManager.default.fileExists(atPath: $0.sourcePath) }
+            }
+            if let existing, existing.id != asset.id {
                 asset.id = existing.id
                 asset.importedAt = existing.importedAt
                 asset.rating = existing.rating

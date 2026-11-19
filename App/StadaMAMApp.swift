@@ -10,7 +10,7 @@ struct StadaMAMApp: App {
             ContentView()
                 .environment(model)
                 .preferredColorScheme(.dark)
-                .frame(minWidth: 1180, minHeight: 720)
+                .frame(minWidth: 1000, minHeight: 640)
         }
         .defaultSize(width: 1560, height: 940)
         .commands {
@@ -32,6 +32,7 @@ struct StadaMAMApp: App {
                     .keyboardShortcut("i", modifiers: [.command, .shift])
                 Button("Find Source for Proxy or Timeline…") { model.presentRecallPanel() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
+                Button("Locate Missing Originals…") { model.presentLocateMissingPanel() }
             }
         }
         Settings {
@@ -47,6 +48,12 @@ struct SettingsView: View {
     var body: some View {
         @Bindable var model = model
         Form {
+            Toggle("Make a proxy for every clip as it is imported", isOn: $model.makesProxiesOnImport)
+            Picker("Proxy format", selection: $model.defaultPreset) {
+                ForEach(ProxyPreset.allCases, id: \.self) { preset in
+                    Text(preset.displayName).tag(preset)
+                }
+            }
             Picker("New proxies go to", selection: $model.proxyNaming) {
                 ForEach(ProxyNaming.allCases, id: \.self) { naming in
                     Text(naming.displayName).tag(naming)

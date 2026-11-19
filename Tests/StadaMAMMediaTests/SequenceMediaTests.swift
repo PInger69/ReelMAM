@@ -58,7 +58,9 @@ private func resolved(_ name: String, rate: FrameRate = .fps24, _ cuts: [(Asset,
         #expect(fm.contentsEqual(atPath: a.sourcePath, andPath: copyA))
         #expect(fm.fileExists(atPath: result.folder + "/Media/This Mac/" + relative + "/A001_C003.sidecar"))
         #expect(fm.fileExists(atPath: result.folder + "/Media/This Mac/" + relative + "/A001_C004.mov"))
-        for name in ["Scene 12- v2.fcpxml", "Scene 12- v2.xml", "Scene 12- v2.edl", "manifest.json", "checksums.sha256"] {
+        // The checksum list is named after the algorithm, which is SHA-256 on a Mac.
+        let checksums = "checksums." + SequencePackageExporter.checksumAlgorithm
+        for name in ["Scene 12- v2.fcpxml", "Scene 12- v2.xml", "Scene 12- v2.edl", "manifest.json", checksums] {
             #expect(fm.fileExists(atPath: result.folder + "/" + name), "missing \(name)")
         }
 

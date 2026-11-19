@@ -51,6 +51,31 @@ jobs:
           watchdog=$!
           wait "$tests"; status=$?
           kill "$watchdog" 2>/dev/null || true
+          if [ "$status" -ne 0 ]; then
+            # A crash in a parallel run does not say which test died: run them one at a time
+            # and show the crash report.
+            echo "::group::Serial rerun"
+            swift test --skip-build --no-parallel 2>&1 | tail -n 60 || true
+            echo "::endgroup::"
+            for report in "$HOME"/Library/Logs/DiagnosticReports/*.ips; do
+              [ -f "$report" ] || continue
+              echo "::group::Crash report $(basename "$report")"
+              python3 - "$report" <<'PY' || head -n 80 "$report"
+          import json, sys
+          text = open(sys.argv[1]).read()
+          body = json.loads(text.split("\n", 1)[1])
+          print(body.get("exception"), body.get("termination"))
+          images = body.get("usedImages", [])
+          for thread in body.get("threads", []):
+              if not thread.get("triggered"):
+                  continue
+              for frame in thread.get("frames", [])[:45]:
+                  image = images[frame["imageIndex"]].get("name", "?") if frame.get("imageIndex", -1) < len(images) else "?"
+                  print("  ", image, frame.get("symbol", hex(frame.get("imageOffset", 0))), frame.get("sourceFile", ""), frame.get("sourceLine", ""))
+          PY
+              echo "::endgroup::"
+            done
+          fi
           exit $status
       - name: Generate Xcode project
         run: xcodegen generate

@@ -198,10 +198,14 @@ struct IngestEngineTests {
         try Data(count: 5).write(to: URL(fileURLWithPath: path))
         await engine.volumesChanged()
         try await Task.sleep(nanoseconds: 200_000_000)
-        // volumesChanged already looked once, in real time; two more looks span the stability period.
-        await engine.scan(folder.id, now: Date().addingTimeInterval(1))
-        await engine.scan(folder.id, now: Date().addingTimeInterval(60))
-        await engine.waitUntilIdle()
+        // volumesChanged already started a look of its own, in real time. A look that arrives while
+        // another is still running is skipped, so keep looking, each time later than the last,
+        // until the looks have spanned the stability period, however slow the machine is.
+        for attempt in 1...200 where worker.processed.isEmpty {
+            await engine.scan(folder.id, now: Date().addingTimeInterval(60 * Double(attempt)))
+            await engine.waitUntilIdle()
+            if worker.processed.isEmpty { try await Task.sleep(nanoseconds: 25_000_000) }
+        }
         view = await engine.view()
         #expect(worker.processed == [path])
         if case .watching = view.status[folder.id] {} else { Issue.record("should be watching") }

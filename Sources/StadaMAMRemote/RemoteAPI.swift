@@ -1,3 +1,5 @@
+// Apple platforms only: this code is built on CryptoKit, Network and Security.
+#if canImport(CryptoKit) && canImport(Network)
 import Foundation
 import GRDB
 import StadaMAMCore
@@ -545,3 +547,4 @@ public final class RemoteAPI: @unchecked Sendable {
         String(name.unicodeScalars.map { $0.value < 32 || $0 == "\"" || $0 == "\\" || $0.value > 126 ? "_" : Character($0) })
     }
 }
+#endif

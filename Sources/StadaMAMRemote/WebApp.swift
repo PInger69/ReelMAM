@@ -1,3 +1,5 @@
+// Apple platforms only: this code is built on CryptoKit, Network and Security.
+#if canImport(CryptoKit) && canImport(Network)
 import Foundation
 
 /// The editors' browser app: one small page served by the mini itself, with no outside
@@ -337,3 +339,4 @@ start();
 })();
 """#
 }
+#endif

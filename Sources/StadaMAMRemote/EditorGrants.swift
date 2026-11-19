@@ -1,3 +1,5 @@
+// Apple platforms only: this code is built on CryptoKit, Network and Security.
+#if canImport(CryptoKit) && canImport(Network)
 import CryptoKit
 import Foundation
 import GRDB
@@ -231,3 +233,4 @@ final class AuthThrottle: @unchecked Sendable {
         if failures.count > 10_000 { failures = failures.filter { !$0.value.isEmpty && now.timeIntervalSince($0.value.last!) < window } }
     }
 }
+#endif

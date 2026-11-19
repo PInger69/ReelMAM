@@ -1,3 +1,5 @@
+// Apple platforms only: this code is built on CryptoKit, Network and Security.
+#if canImport(CryptoKit) && canImport(Network)
 import CryptoKit
 import Foundation
 import GRDB
@@ -272,3 +274,4 @@ public final class AuditLog: @unchecked Sendable {
         return out
     }
 }
+#endif

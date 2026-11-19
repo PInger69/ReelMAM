@@ -1,3 +1,5 @@
+// Apple platforms only: this code is built on CryptoKit, Network and Security.
+#if canImport(CryptoKit) && canImport(Network)
 import Foundation
 import Security
 
@@ -102,3 +104,4 @@ public struct ServerIdentity: @unchecked Sendable {
         }
     }
 }
+#endif

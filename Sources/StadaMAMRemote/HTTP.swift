@@ -1,3 +1,5 @@
+// Apple platforms only: this code is built on CryptoKit, Network and Security.
+#if canImport(CryptoKit) && canImport(Network)
 import Foundation
 
 /// A parsed HTTP/1.1 request. The server only ever reads, so there is no body.
@@ -178,3 +180,4 @@ public enum ByteRange: Equatable {
         return .partial(start: start, end: min(end, size - 1))
     }
 }
+#endif

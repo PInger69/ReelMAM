@@ -1,3 +1,5 @@
+// Apple platforms only: this code is built on CryptoKit, Network and Security.
+#if canImport(CryptoKit) && canImport(Network)
 import CryptoKit
 import Foundation
 import Network
@@ -317,3 +319,4 @@ public final class PinnedCertificateDelegate: NSObject, URLSessionDelegate, @unc
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }
+#endif

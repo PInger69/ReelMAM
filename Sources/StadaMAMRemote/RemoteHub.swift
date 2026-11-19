@@ -1,3 +1,5 @@
+// Apple platforms only: this code is built on CryptoKit, Network and Security.
+#if canImport(CryptoKit) && canImport(Network)
 import Foundation
 import StadaMAMCore
 
@@ -335,3 +337,4 @@ public final class RemoteHub: @unchecked Sendable {
         try audit.exportJSONLines().write(to: url, options: .atomic)
     }
 }
+#endif

@@ -1,3 +1,5 @@
+// Apple platforms only: this code is built on CryptoKit, Network and Security.
+#if canImport(CryptoKit) && canImport(Network)
 import CryptoKit
 import Foundation
 import Security
@@ -487,3 +489,4 @@ private struct NoMark: ProxyWatermarker {
         }
     }
 }
+#endif

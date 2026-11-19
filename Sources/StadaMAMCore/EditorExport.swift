@@ -48,7 +48,7 @@ public enum EditorExport {
     /// - Parameter pathMappings: where the editor's computer sees this Mac's storage, when the
     ///   editor works on another machine (Windows drive letters, Linux mount points).
     public static func document(for clips: [EditorClip], target: EditorTarget, media: EditorMedia,
-                                collectionName: String = "StadaXR A.I. MAM",
+                                collectionName: String = "StradaXR AI MAM",
                                 pathMappings: [PathMapping] = []) -> String {
         // In proxy mode only clips that actually have a proxy can be sent.
         var usable = media == .proxies ? clips.filter { $0.proxyPath != nil } : clips

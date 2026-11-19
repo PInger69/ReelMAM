@@ -22,7 +22,7 @@ struct ClipDetailView: View {
         VSplitView {
             VStack(spacing: 0) {
                 viewer
-                ScrubBar(player: player, thumbnails: model.thumbnailPaths[asset.id] ?? [],
+                ScrubBar(player: player, thumbnails: model.thumbnails(for: asset),
                          markers: data.markers, shots: data.tags.filter { $0.kind == .shot })
                     .frame(height: 46)
                     .padding(.horizontal, 12)

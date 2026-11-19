@@ -4,9 +4,9 @@ import SwiftUI
 enum InspectorTab: String, CaseIterable, Identifiable {
     case info = "Info"
     case markers = "Markers"
-    case transcript = "Transcript"
-    case scenes = "Scenes"
-    case people = "People"
+    case transcript = "Dialogue"
+    case scenes = "Coverage"
+    case people = "Cast"
 
     var id: String { rawValue }
 }
@@ -276,8 +276,8 @@ private struct TranscriptPane: View {
 
     var body: some View {
         if segments.isEmpty {
-            EmptyPane(title: "No transcript", symbol: "captions.bubble",
-                      message: "Analyse the clip to transcribe its speech, search it and export captions.",
+            EmptyPane(title: "No dialogue logged", symbol: "captions.bubble",
+                      message: "Analyse the clip to log its dialogue, search it and export subtitles.",
                       actionTitle: "Analyse with A.I.") { model.analyze(asset) }
         } else {
             VStack(alignment: .leading, spacing: 2) {
@@ -316,28 +316,62 @@ private struct ScenesPane: View {
     let asset: Asset
     let tags: [SceneTag]
     let player: PlayerController
+    @State private var editing: SceneTag?
+    @State private var editedLabel = ""
+    @State private var rewording: SceneTag?
+    @State private var rewordedLabel = ""
+    @State private var newTag = ""
 
     var body: some View {
         if tags.isEmpty {
             EmptyPane(title: "Not analysed", symbol: "sparkles",
-                      message: "Analyse the clip to detect shots, recognise scenes, objects, animals and people in frame, read on-screen text, classify sounds and pick out names in the speech.",
+                      message: "Analyse the clip to find setups and cuts, framing and shot size, locations and props, read slates and on-screen text, classify production sound and pick out names in the dialogue.",
                       actionTitle: "Analyse with A.I.") { model.analyze(asset) }
         } else {
             VStack(alignment: .leading, spacing: 14) {
                 if let summary = tags.first(where: { $0.kind == .summary }) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Summary").font(.headline)
+                        Text("Logline").font(.headline)
                         Text(summary.label).textSelection(.enabled)
                     }
                 }
-                section("Shots", tags.filter { $0.kind == .shot }, tint: .gray)
-                section("Scenes and objects", tags.filter { $0.kind == .label }, tint: .purple)
+                HStack {
+                    TextField("Add your own tag at the playhead (NG, best take, lens flare…)", text: $newTag)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addTag() }
+                    Button("Add") { addTag() }.disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                Text("Right-click any tag to rename it, delete it, or change how it is worded in every clip.")
+                    .font(.caption).foregroundStyle(.secondary)
+                section("Slate", tags.filter { $0.kind == .slate }, tint: .yellow)
+                section("Setups", tags.filter { $0.kind == .shot }, tint: .gray)
+                section("Framing, location and props", tags.filter { $0.kind == .label }, tint: .purple)
                 section("On-screen text", tags.filter { $0.kind == .text }, tint: .teal)
-                section("Named in speech", tags.filter { $0.kind == .entity }, tint: .orange)
-                section("Sounds", tags.filter { $0.kind == .sound }, tint: .green)
+                section("Named in dialogue", tags.filter { $0.kind == .entity }, tint: .orange)
+                section("Production sound", tags.filter { $0.kind == .sound }, tint: .green)
                 section("External A.I.", tags.filter { $0.kind == .external }, tint: .pink)
             }
+            .alert("Rename tag", isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
+                TextField("Tag", text: $editedLabel)
+                Button("Rename") { if let tag = editing { model.rename(tag, to: editedLabel) }; editing = nil }
+                Button("Cancel", role: .cancel) { editing = nil }
+            }
+            .alert("Always call it…", isPresented: Binding(get: { rewording != nil }, set: { if !$0 { rewording = nil } })) {
+                TextField("New wording", text: $rewordedLabel)
+                Button("Apply to Every Clip") {
+                    if let tag = rewording { model.renameEverywhere(tag.label, to: rewordedLabel) }
+                    rewording = nil
+                }
+                Button("Cancel", role: .cancel) { rewording = nil }
+            } message: {
+                if let tag = rewording { Text("Every “\(tag.label)” in the catalogue, and in clips analysed later, is reworded.") }
+            }
         }
+    }
+
+    private func addTag() {
+        model.addTag(newTag, to: asset, atSeconds: player.currentSeconds)
+        newTag = ""
     }
 
     @ViewBuilder private func section(_ title: String, _ items: [SceneTag], tint: Color) -> some View {
@@ -349,7 +383,10 @@ private struct ScenesPane: View {
                     ForEach(items) { tag in
                         Button { player.seek(toSeconds: tag.startSeconds) } label: {
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(tag.label).lineLimit(1)
+                                HStack(spacing: 4) {
+                                    Text(tag.label).lineLimit(1)
+                                    if tag.userEdited { Image(systemName: "pencil").font(.caption2) }
+                                }
                                 Text(asset.timecode(atFrame: asset.frameRate.frames(forSeconds: tag.startSeconds)).description)
                                     .font(.caption2.monospacedDigit())
                                     .foregroundStyle(.secondary)
@@ -360,9 +397,22 @@ private struct ScenesPane: View {
                             .background(tint.opacity(0.22), in: RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)
+                        .contextMenu { menu(for: tag) }
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder private func menu(for tag: SceneTag) -> some View {
+        if tag.kind != .shot {
+            Button("Rename…") { editedLabel = tag.label; editing = tag }
+        }
+        Button("Delete from This Clip", role: .destructive) { model.delete(tag) }
+        if tag.kind == .label {
+            Divider()
+            Button("Always Call It Something Else…") { rewordedLabel = tag.label; rewording = tag }
+            Button("Never Tag “\(tag.label)” Anywhere", role: .destructive) { model.hideEverywhere(tag.label) }
         }
     }
 }
@@ -377,8 +427,8 @@ private struct PeoplePane: View {
         let grouped = Dictionary(grouping: faces.filter { $0.personID != nil }, by: { $0.personID! })
         let people = model.people.filter { grouped[$0.id] != nil }
         if people.isEmpty {
-            EmptyPane(title: "No people found", symbol: "person.crop.rectangle.stack",
-                      message: "Analyse the clip to find faces. Name a person once and every clip they appear in becomes searchable.",
+            EmptyPane(title: "No cast found", symbol: "person.crop.rectangle.stack",
+                      message: "Analyse the clip to find faces. Name an actor or character once and every take they appear in becomes searchable.",
                       actionTitle: "Analyse with A.I.") { model.analyze(asset) }
         } else {
             VStack(alignment: .leading, spacing: 6) {
@@ -401,7 +451,7 @@ private struct PersonRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "person.crop.circle.fill").font(.title2).foregroundStyle(.secondary)
-            TextField("Name this person", text: $name)
+            TextField("Actor or character name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 240)
                 .onSubmit { model.rename(person, to: name) }

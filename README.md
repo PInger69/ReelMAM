@@ -1,4 +1,4 @@
-# StadaXR A.I. MAM
+# StradaXR AI MAM
 
 A visually rich media asset manager for macOS. Catalogue every clip, generate proxies that
 always lead back to the camera original, mark and scrub fast, and search footage by what is
@@ -30,6 +30,19 @@ said and shown in it.
 | Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |
 | macOS app: library grid with hover scrub, player with JKL shuttle, frame stepping, mark in / out, markers and subclips, inspector | Written; verified only by the macOS CI build, not yet run by hand |
 | On-device A.I. (Apple Vision and Speech): speech-to-text, shot detection, scene / object labels, on-screen text, face grouping | Written; verified only by the macOS CI build, not yet run on real footage |
+
+## Cinema logging, editable labels and scale
+
+- **Dialogue** reads every live microphone channel (not just channels 1 and 2), cuts at quiet
+  moments into short stretches, skips room tone, and is primed with set vocabulary plus the
+  character names you give it (Settings › Dialogue & Storage). Slates ("scene 12A, take 3") become tags.
+- **Picture labels** speak cinema: framing (single, two-shot, group), shot size (close-up to
+  extreme wide), INT./EXT. Right-click any tag in the Coverage tab to rename or delete it; hide
+  or reword a label across the whole catalogue in Settings › Picture Labels. Hand edits survive re-analysis.
+- **Scale**: write-ahead-logged catalogue with indexes, resumable bulk import that skips clips already
+  catalogued, lazy thumbnails, background offline checks, analysis and proxy runs queued a few at a
+  time, adaptive frame sampling for long clips, and a proxy folder you can point at a large volume.
+  Not yet measured against a real 200 TB library.
 
 ## How source recall works
 
@@ -81,7 +94,7 @@ sources, ready for online / conform.
 ## Running a build without Xcode
 
 Every build on GitHub packages the app. On the repository's **Actions** tab, open the latest
-successful run and download the **StadaXR-AI-MAM** artifact. Unzip it twice to get
+successful run and download the **StradaXR-AI-MAM** artifact. Unzip it twice to get
 `StadaMAM.app`, move it to Applications, then clear the download quarantine once, because the
 build is not signed with an Apple Developer ID:
 

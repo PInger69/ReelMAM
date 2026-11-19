@@ -220,6 +220,8 @@ public enum TagKind: String, Codable, Sendable {
     case external
     /// A written description of the clip (from an external hook).
     case summary
+    /// A slate read from the picture or the dialogue: scene, take, camera roll.
+    case slate
 }
 
 /// A time-ranged piece of machine-generated description.
@@ -232,9 +234,12 @@ public struct SceneTag: Codable, Identifiable, Hashable, Sendable, FetchableReco
     public var confidence: Double
     public var startSeconds: Double
     public var endSeconds: Double
+    /// True for tags a person added or changed. Re-analysing a clip never touches these.
+    public var userEdited: Bool
 
     public init(id: String = newID(), assetID: String, kind: TagKind, label: String,
-                confidence: Double, startSeconds: Double, endSeconds: Double) {
+                confidence: Double, startSeconds: Double, endSeconds: Double, userEdited: Bool = false) {
+        self.userEdited = userEdited
         self.id = id
         self.assetID = assetID
         self.kind = kind
@@ -289,6 +294,10 @@ public struct FaceSighting: Codable, Identifiable, Hashable, Sendable, Fetchable
         embedding.withUnsafeBytes { raw in
             Array(raw.bindMemory(to: Float.self))
         }
+    }
+
+    public static func vector(from data: Data) -> [Float] {
+        data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
     }
 
     public static func data(from vector: [Float]) -> Data {

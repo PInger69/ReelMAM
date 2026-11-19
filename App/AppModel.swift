@@ -59,14 +59,32 @@ final class AppModel {
     }
     /// Renders run a few at a time so the media engine is kept busy without being oversubscribed.
     private let renderLimiter = JobLimiter(limit: MediaLibrary.recommendedConcurrentRenders)
+    /// Analysis is heavy on the neural engine and memory; two clips at a time.
+    private let analysisLimiter = JobLimiter(limit: 2)
+    @ObservationIgnored private var thumbnailCache: [String: [String]] = [:]
+    @ObservationIgnored private var thumbnailMisses: [String: Int] = [:]
+    @ObservationIgnored private var lastReload = Date.distantPast
+    @ObservationIgnored private var reloadScheduled = false
+    @ObservationIgnored private var offlineCheckRunning = false
+    @ObservationIgnored private var offlineCheckAgain = false
 
     var assets: [Asset] = []
     var people: [Person] = []
     var selectedID: String?
-    var filter: LibraryFilter = .all
-    var searchText = "" {
-        didSet { refreshSearch() }
+    var filter: LibraryFilter = .all {
+        didSet { recomputeVisible() }
     }
+    var searchText = "" {
+        didSet { refreshSearch(); recomputeVisible() }
+    }
+    /// The clips on screen, worked out once per change rather than on every redraw: a feature's
+    /// footage is hundreds of thousands of clips.
+    private(set) var visibleAssets: [Asset] = []
+    private(set) var visibleGroups: [LibraryGrouping.Group] = []
+    /// "Importing 1,204 of 58,000" while a large import runs.
+    private(set) var importProgress: (done: Int, total: Int)?
+    /// How far a bulk analysis or proxy run has got.
+    private(set) var queueProgress: (title: String, done: Int, total: Int)?
     private(set) var searchHits: [SearchHit] = []
     var activity: [String: Activity] = [:]
     var alert: String?
@@ -82,10 +100,31 @@ final class AppModel {
     /// Volumes (drives and network shares) that hold catalogued clips, with clip counts.
     private(set) var volumes: [(name: String, count: Int)] = []
     var sort: LibrarySort {
-        didSet { UserDefaults.standard.set(sort.rawValue, forKey: "librarySort") }
+        didSet { UserDefaults.standard.set(sort.rawValue, forKey: "librarySort"); recomputeVisible() }
     }
     var grouping: LibraryGrouping {
-        didSet { UserDefaults.standard.set(grouping.rawValue, forKey: "libraryGrouping") }
+        didSet { UserDefaults.standard.set(grouping.rawValue, forKey: "libraryGrouping"); recomputeVisible() }
+    }
+    /// Corrections to the picture labels (hidden or reworded), kept in the catalogue.
+    private(set) var labelRules: [LabelRule] = []
+    /// How sure the picture recogniser must be before a label is kept.
+    var labelThreshold: Double {
+        didSet { UserDefaults.standard.set(labelThreshold, forKey: "labelThreshold") }
+    }
+    /// The language spoken on set; empty means this Mac's language.
+    var dialogueLanguage: String {
+        didSet { UserDefaults.standard.set(dialogueLanguage, forKey: "dialogueLanguage") }
+    }
+    /// Character, place and crew names the dialogue pass should expect, one per line.
+    var dialogueVocabulary: String {
+        didSet { UserDefaults.standard.set(dialogueVocabulary, forKey: "dialogueVocabulary") }
+    }
+    /// Where proxies are written; empty means the default folder. Point it at a large volume.
+    var proxyFolder: String {
+        didSet {
+            UserDefaults.standard.set(proxyFolder, forKey: "proxyFolder")
+            library?.proxyFolder = proxyFolder.isEmpty ? nil : proxyFolder
+        }
     }
     /// Where an editor on another computer sees this Mac's storage.
     var pathMappings: [PathMapping] {
@@ -105,7 +144,16 @@ final class AppModel {
     /// Clips whose original is not currently reachable (moved, renamed, or volume not mounted).
     private(set) var offline: Set<String> = []
     private(set) var personAssets: Set<String> = []
-    private(set) var thumbnailPaths: [String: [String]] = [:]
+
+    /// Contact-sheet frames for a clip, looked up when the card is first shown rather than for
+    /// every clip on every refresh.
+    func thumbnails(for asset: Asset) -> [String] {
+        if let cached = thumbnailCache[asset.id] { return cached }
+        if thumbnailMisses[asset.id] == revision { return [] }
+        let found = library?.thumbnails(forAssetID: asset.id) ?? []
+        if found.isEmpty { thumbnailMisses[asset.id] = revision } else { thumbnailCache[asset.id] = found }
+        return found
+    }
 
     init() {
         let fm = FileManager.default
@@ -128,6 +176,10 @@ final class AppModel {
         makesProxiesOnImport = UserDefaults.standard.object(forKey: "makesProxiesOnImport") as? Bool ?? true
         defaultPreset = UserDefaults.standard.string(forKey: "defaultPreset").flatMap(ProxyPreset.init(rawValue:))
             ?? .proResProxyHalf
+        labelThreshold = defaults.object(forKey: "labelThreshold") as? Double ?? 0.35
+        dialogueLanguage = defaults.string(forKey: "dialogueLanguage") ?? ""
+        dialogueVocabulary = defaults.string(forKey: "dialogueVocabulary") ?? ""
+        proxyFolder = defaults.string(forKey: "proxyFolder") ?? ""
         var startupProblem: String?
         do {
             catalog = try Catalog(path: support.appendingPathComponent("Catalog.sqlite").path)
@@ -140,7 +192,9 @@ final class AppModel {
         // and only for formats those frameworks cannot open.
         library = MediaLibrary(catalog: catalog, tools: FFmpegTools.locate(), storageRoot: storage.path,
                                naming: naming, pipelines: RenderPipeline.appleSilicon)
+        library?.proxyFolder = proxyFolder.isEmpty ? nil : proxyFolder
         alert = startupProblem
+        try? catalog.installDefaultLabelRulesIfNeeded()
         // Shares that were remounted under another name are picked up now and whenever a volume appears.
         _ = try? library?.remapRemountedVolumes()
         reload()
@@ -178,14 +232,12 @@ final class AppModel {
 
     var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    /// The clips on screen: search results in relevance order, otherwise the current
-    /// selection in the chosen sort order.
-    var visibleAssets: [Asset] {
-        isSearching ? filteredAssets : sort.sorted(filteredAssets)
-    }
+    var isSearchingNow: Bool { isSearching }
 
-    var visibleGroups: [LibraryGrouping.Group] {
-        (isSearching ? LibraryGrouping.none : grouping).groups(visibleAssets)
+    private func recomputeVisible() {
+        let shown = isSearching ? filteredAssets : sort.sorted(filteredAssets)
+        visibleAssets = shown
+        visibleGroups = (isSearching ? LibraryGrouping.none : grouping).groups(shown)
     }
 
     var binTree: [BinNode] { BinNode.tree(from: bins) }
@@ -225,7 +277,7 @@ final class AppModel {
             people = try catalog.people()
             withProxy = try catalog.assetIDsWithReadyProxy()
             withTranscript = try catalog.assetIDsWithTranscript()
-            offline = Set(assets.filter { !FileManager.default.fileExists(atPath: $0.sourcePath) }.map(\.id))
+            scheduleOfflineCheck()
             if offline.isEmpty, filter == .offline { filter = .all }
             if case .person(let id) = filter { personAssets = try catalog.assetIDs(forPerson: id) }
             bins = try catalog.bins()
@@ -240,11 +292,7 @@ final class AppModel {
             volumes = Dictionary(grouping: assets, by: { $0.volumeName ?? "This Mac" })
                 .map { (name: $0.key, count: $0.value.count) }
                 .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-            if let library {
-                thumbnailPaths = Dictionary(uniqueKeysWithValues: assets.map {
-                    ($0.id, library.thumbnails(forAssetID: $0.id))
-                })
-            }
+            labelRules = (try? catalog.labelRules()) ?? []
             refreshSearch()
             if opensFirstClip, selectedID == nil { selectedID = assets.last?.id }
             // Demonstration launch: show what bins look like once there is something to put in them.
@@ -258,14 +306,119 @@ final class AppModel {
                 binCounts = try catalog.binCounts()
             }
             revision += 1
+            recomputeVisible()
+            lastReload = Date()
         } catch {
             alert = error.localizedDescription
+        }
+    }
+
+    /// Reloads at most about once every two seconds, for long runs that finish thousands of clips.
+    private func reloadSoon() {
+        guard !reloadScheduled else { return }
+        reloadScheduled = true
+        let wait = max(0, 2 - Date().timeIntervalSince(lastReload))
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            reloadScheduled = false
+            reload()
+        }
+    }
+
+    /// Works out which originals are unreachable, off the main thread. A volume that is not
+    /// mounted takes one look, not one look per clip; a mounted one is checked clip by clip
+    /// in the background so a slow network share never freezes the interface.
+    private func scheduleOfflineCheck() {
+        if offlineCheckRunning { offlineCheckAgain = true; return }
+        offlineCheckRunning = true
+        let snapshot = assets.map { ($0.id, $0.sourcePath, $0.volumeName) }
+        Task.detached(priority: .utility) {
+            let mounted = Set((try? FileManager.default.contentsOfDirectory(atPath: "/Volumes")) ?? [])
+            var missing = Set<String>()
+            for (id, path, volume) in snapshot {
+                if let volume, !mounted.contains(volume) { missing.insert(id); continue }
+                if !FileManager.default.fileExists(atPath: path) { missing.insert(id) }
+            }
+            await self.finishOfflineCheck(missing)
+        }
+    }
+
+    private func finishOfflineCheck(_ missing: Set<String>) {
+        offlineCheckRunning = false
+        if offline != missing { offline = missing }
+        if offline.isEmpty, filter == .offline { filter = .all }
+        if offlineCheckAgain {
+            offlineCheckAgain = false
+            scheduleOfflineCheck()
         }
     }
 
     func select(filter newFilter: LibraryFilter) {
         filter = newFilter
         reload()
+    }
+
+    // MARK: Picture labels
+
+    private func tagsChanged() {
+        revision += 1
+        refreshSearch()
+        recomputeVisible()
+    }
+
+    /// Renames one tag on one clip. The change is kept through re-analysis.
+    func rename(_ tag: SceneTag, to label: String) {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != tag.label else { return }
+        var edited = tag
+        edited.label = trimmed
+        do { try catalog.saveEdited(edited); tagsChanged() } catch { alert = error.localizedDescription }
+    }
+
+    func delete(_ tag: SceneTag) {
+        do { try catalog.deleteTag(tag); tagsChanged() } catch { alert = error.localizedDescription }
+    }
+
+    /// Adds a tag of your own at a moment in a clip, e.g. "NG", "best take", "lens flare".
+    func addTag(_ label: String, to asset: Asset, atSeconds seconds: Double) {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let tag = SceneTag(assetID: asset.id, kind: .label, label: trimmed, confidence: 1,
+                           startSeconds: seconds, endSeconds: min(seconds + 2, max(asset.durationSeconds, seconds + 2)),
+                           userEdited: true)
+        do { try catalog.saveEdited(tag); tagsChanged() } catch { alert = error.localizedDescription }
+    }
+
+    /// Never produce this label again, and remove it from every clip already analysed.
+    func hideEverywhere(_ label: String) {
+        addRule(LabelRule(match: label, action: .hide))
+    }
+
+    /// Always use this wording, and reword it in every clip already analysed.
+    func renameEverywhere(_ label: String, to replacement: String) {
+        addRule(LabelRule(match: label, action: .rename, replacement: replacement))
+    }
+
+    func addRule(_ rule: LabelRule) {
+        guard !rule.match.isEmpty, rule.action == .hide || !rule.replacement.isEmpty else { return }
+        var rule = rule
+        if let existing = labelRules.first(where: { $0.match == rule.match }) { rule.id = existing.id }
+        do {
+            try catalog.save(rule)
+            let changed = try catalog.apply(rule)
+            labelRules = try catalog.labelRules()
+            tagsChanged()
+            if changed > 0 { alert = nil }
+        } catch { alert = error.localizedDescription }
+    }
+
+    func deleteRule(_ rule: LabelRule) {
+        do { try catalog.deleteRule(rule); labelRules = try catalog.labelRules() } catch { alert = error.localizedDescription }
+    }
+
+    /// The labels the picture analysis has produced so far, most common first.
+    func labelCounts() -> [(label: String, count: Int)] {
+        (try? catalog.labelCounts()) ?? []
     }
 
     private func refreshSearch() {
@@ -342,32 +495,70 @@ final class AppModel {
             return
         }
         Task.detached(priority: .userInitiated) {
-            var failures: [String] = []
-            for file in paths.flatMap({ MediaLibrary.mediaFiles(at: $0) }) {
-                do {
-                    let asset = try await library.importFile(at: file)
-                    await self.setActivity(asset.id, Activity(title: "Thumbnails"))
-                    _ = try? await library.makeThumbnails(for: asset)
-                    await self.setActivity(asset.id, nil)
-                    await self.makeProxyAfterImport(asset)
-                } catch MediaError.isOwnProxy {
-                    continue
-                } catch {
-                    failures.append("\((file as NSString).lastPathComponent): \(error.localizedDescription)")
-                }
-                await self.reload()
+            // Clips already catalogued at the same size are skipped, so an interrupted import of a
+            // huge folder simply carries on where it stopped.
+            let known = (try? library.catalog.knownFileSizes()) ?? [:]
+            let found = paths.flatMap { MediaLibrary.mediaFiles(at: $0) }
+            let files = found.filter { file in
+                guard let size = known[file] else { return true }
+                let onDisk = ((try? FileManager.default.attributesOfItem(atPath: file))?[.size] as? NSNumber)?.int64Value
+                return onDisk != size
             }
-            if !failures.isEmpty {
-                let shown = failures.prefix(8).joined(separator: "\n")
-                await self.show("Some files could not be imported:\n\(shown)")
+            guard !files.isEmpty else {
+                await self.show(found.isEmpty ? "No media files were found there."
+                                              : "All \(found.count) clips are already in the catalogue.")
+                return
+            }
+            await self.setImportProgress((0, files.count))
+            let failures = FailureLog()
+            let counter = ImportCounter()
+            // A few clips at a time: probing and fingerprinting mostly wait on storage.
+            await withTaskGroup(of: Void.self) { group in
+                var iterator = files.makeIterator()
+                func next() -> String? { iterator.next() }
+                for _ in 0..<4 {
+                    guard let first = next() else { break }
+                    group.addTask { await self.importOne(first, library: library, failures: failures) }
+                }
+                while await group.next() != nil {
+                    let done = await counter.increment()
+                    await self.setImportProgress((done, files.count))
+                    await self.reloadSoon()
+                    if let file = next() {
+                        group.addTask { await self.importOne(file, library: library, failures: failures) }
+                    }
+                }
+            }
+            await self.setImportProgress(nil)
+            await self.reload()
+            let problems = await failures.all
+            if !problems.isEmpty {
+                let shown = problems.prefix(8).joined(separator: "\n")
+                await self.show("\(problems.count) file\(problems.count == 1 ? "" : "s") could not be imported:\n\(shown)")
             }
         }
     }
+
+    private func importOne(_ file: String, library: MediaLibrary, failures: FailureLog) async {
+        do {
+            let asset = try await library.importFile(at: file)
+            _ = try? await library.makeThumbnails(for: asset)
+            await makeProxyAfterImport(asset)
+        } catch MediaError.isOwnProxy {
+            return
+        } catch {
+            await failures.add("\((file as NSString).lastPathComponent): \(error.localizedDescription)")
+        }
+    }
+
+    private func setImportProgress(_ value: (done: Int, total: Int)?) { importProgress = value }
 
     private func makeProxyAfterImport(_ asset: Asset) {
         guard makesProxiesOnImport, asset.decodePath.canRender, !withProxy.contains(asset.id) else { return }
         makeProxy(for: asset, preset: defaultPreset)
     }
+
+    private func setQueueProgress(_ value: (title: String, done: Int, total: Int)?) { queueProgress = value }
 
     // MARK: Missing originals
 
@@ -429,12 +620,53 @@ final class AppModel {
         }
     }
 
-    /// Queues a proxy for every clip that can be rendered and does not have one yet.
+    /// Renders a proxy for every clip that can be rendered and does not have one yet. Clips are
+    /// handed out a few at a time, so 100,000 clips do not become 100,000 waiting jobs.
     func makeMissingProxies(preset: ProxyPreset) {
         let missing = (try? catalog.assetIDsWithoutReadyProxy()) ?? []
-        for asset in assets where missing.contains(asset.id) && asset.decodePath.canRender {
-            makeProxy(for: asset, preset: preset)
+        let targets = assets.filter { missing.contains($0.id) && $0.decodePath.canRender }
+        guard !targets.isEmpty else { return }
+        let limiter = renderLimiter
+        Task.detached(priority: .userInitiated) {
+            await self.setQueueProgress(("Making proxies", 0, targets.count))
+            var finished = 0
+            await withTaskGroup(of: Void.self) { group in
+                for asset in targets {
+                    await limiter.acquire()
+                    guard await self.beginRendering(asset), let library = await self.library else {
+                        await limiter.release()
+                        continue
+                    }
+                    group.addTask {
+                        do {
+                            try await library.makeProxy(for: asset, preset: preset) { fraction in
+                                Task { @MainActor in
+                                    self.activity[asset.id] = Activity(title: "Rendering proxy", progress: fraction)
+                                }
+                            }
+                            if library.thumbnails(forAssetID: asset.id).isEmpty {
+                                _ = try? await library.makeThumbnails(for: asset)
+                            }
+                        } catch {
+                            await self.show("\(asset.fileName): \(error.localizedDescription)")
+                        }
+                        await limiter.release()
+                        await self.setActivity(asset.id, nil)
+                        await self.reloadSoon()
+                    }
+                    finished += 1
+                    await self.setQueueProgress(("Making proxies", finished, targets.count))
+                }
+            }
+            await self.setQueueProgress(nil)
+            await self.reload()
         }
+    }
+
+    private func beginRendering(_ asset: Asset) -> Bool {
+        guard library != nil, activity[asset.id] == nil else { return false }
+        activity[asset.id] = Activity(title: "Rendering proxy", progress: 0)
+        return true
     }
 
     func revealInFinder(_ path: String) {
@@ -465,12 +697,12 @@ final class AppModel {
             return
         }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "StadaXR clips for \(target.displayName).\(target.fileExtension)"
+        panel.nameFieldStringValue = "StradaXR clips for \(target.displayName).\(target.fileExtension)"
         panel.message = "Import this file into \(target.displayName)."
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try EditorExport.document(for: clips, target: target, media: media,
-                                      collectionName: currentBin?.name ?? "StadaXR A.I. MAM",
+                                      collectionName: currentBin?.name ?? "StradaXR AI MAM",
                                       pathMappings: editorIsOnAnotherComputer ? pathMappings : [])
                 .write(to: url, atomically: true, encoding: .utf8)
             NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -503,7 +735,7 @@ final class AppModel {
                 if let timeline = urls.first(where: { timelineExtensions.contains($0.pathExtension.lowercased()) }) {
                     let text = try String(contentsOf: timeline, encoding: .utf8)
                     guard let relink = try library.relinkTimeline(text: text, pathMappings: pathMappings) else {
-                        alert = "\(timeline.lastPathComponent) is not a timeline StadaXR A.I. MAM can read."
+                        alert = "\(timeline.lastPathComponent) is not a timeline StradaXR AI MAM can read."
                         return
                     }
                     let rows = relink.resolutions.map { reference, resolution in
@@ -600,88 +832,135 @@ final class AppModel {
 
     // MARK: AI
 
-    /// Runs every analysis pass on a clip: picture (shots, scenes, objects, animals, people
-    /// in frame, on-screen text, faces), sound, speech-to-text, names in the speech, and then
+    /// Runs every analysis pass on a clip: picture (shots, framing and shot size, scenes, objects,
+    /// animals, on-screen text, faces), sound, dialogue, slates and names in the dialogue, and then
     /// any external A.I. hooks. Each pass is independent, so one failing does not lose the rest.
+    /// Clips wait their turn, two at a time.
     func analyze(_ asset: Asset) {
-        guard let path = library?.playablePath(for: asset) else {
+        guard library?.playablePath(for: asset) != nil else {
             alert = "\(asset.fileName) has no playable media yet. Generate a proxy first."
             return
         }
         guard activity[asset.id] == nil else { return }
-        let url = URL(fileURLWithPath: path)
-        activity[asset.id] = Activity(title: "Analysing picture", progress: 0)
+        activity[asset.id] = Activity(title: "Waiting to analyse")
+        let limiter = analysisLimiter
         Task {
-            var problems: [String] = []
-            do {
-                let visual = try await VisionAnalyzer.analyze(mediaURL: url, asset: asset) { fraction in
-                    Task { @MainActor in
-                        self.activity[asset.id] = Activity(title: "Analysing picture", progress: fraction)
-                    }
-                }
-                try catalog.replaceTags(assetID: asset.id, kinds: [.shot, .label, .text], with: visual.tags)
-                try catalog.replaceFaces(assetID: asset.id, with: visual.faces)
-                try groupFaces()
-                reload()
-            } catch {
-                problems.append("Picture: \(error.localizedDescription)")
-            }
-
-            if asset.audioChannels > 0 {
-                activity[asset.id] = Activity(title: "Listening for sounds")
-                do {
-                    let sounds = try await SoundAnalyzer.classify(mediaURL: url, assetID: asset.id)
-                    try catalog.replaceTags(assetID: asset.id, kinds: [.sound], with: sounds)
-                } catch {
-                    problems.append("Sound: \(error.localizedDescription)")
-                }
-
-                activity[asset.id] = Activity(title: "Transcribing speech")
-                do {
-                    let segments = try await Transcriber.transcribe(mediaURL: url, assetID: asset.id)
-                    try catalog.replaceTranscript(assetID: asset.id, with: segments)
-                    try catalog.replaceTags(assetID: asset.id, kinds: [.entity],
-                                            with: TextAnalyzer.entities(in: segments, assetID: asset.id))
-                } catch AnalysisError.noAudio {
-                    // Silent clips simply have no transcript.
-                } catch {
-                    problems.append("Speech: \(error.localizedDescription)")
-                }
-                reload()
-            }
-
-            for hook in analysisHooks where hook.isEnabled && !hook.url.isEmpty {
-                activity[asset.id] = Activity(title: "Asking \(hook.name.isEmpty ? "external A.I." : hook.name)")
-                do {
-                    let body = ExternalAnalysisRequest(
-                        asset: asset, transcript: try catalog.transcript(forAsset: asset.id),
-                        tags: try catalog.tags(forAsset: asset.id))
-                    let reply = try await ExternalAnalysisClient.send(hook: hook, token: Keychain.token(for: hook.id),
-                                                                     body: body)
-                    try catalog.replaceTags(assetID: asset.id, kinds: [.external, .summary],
-                                            with: reply.sceneTags(for: asset))
-                } catch {
-                    problems.append("\(hook.name.isEmpty ? "External A.I." : hook.name): \(error.localizedDescription)")
-                }
-            }
-
-            activity[asset.id] = nil
-            reload()
-            if !problems.isEmpty {
-                alert = "\(asset.fileName) was analysed with some parts missing:\n" + problems.joined(separator: "\n")
-            }
+            await limiter.acquire()
+            await runAnalysis(asset)
+            await limiter.release()
         }
     }
 
-    /// Analyses every clip on screen that has playable media.
-    func analyzeVisible() {
-        for asset in visibleAssets where library?.playablePath(for: asset) != nil { analyze(asset) }
+    private func runAnalysis(_ asset: Asset) async {
+        guard let path = library?.playablePath(for: asset) else { activity[asset.id] = nil; return }
+        let url = URL(fileURLWithPath: path)
+        activity[asset.id] = Activity(title: "Analysing picture", progress: 0)
+        var problems: [String] = []
+        let rules = labelRules
+        let threshold = labelThreshold
+        do {
+            let visual = try await VisionAnalyzer.analyze(mediaURL: url, asset: asset, labelThreshold: threshold,
+                                                          rules: rules) { fraction in
+                Task { @MainActor in
+                    self.activity[asset.id] = Activity(title: "Analysing picture", progress: fraction)
+                }
+            }
+            try catalog.replaceTags(assetID: asset.id, kinds: [.shot, .label, .text], with: visual.tags)
+            try catalog.replaceFaces(assetID: asset.id, with: visual.faces)
+            try groupFaces(for: asset.id)
+        } catch {
+            problems.append("Picture: \(error.localizedDescription)")
+        }
+
+        if asset.audioChannels > 0 {
+            activity[asset.id] = Activity(title: "Listening for sounds")
+            do {
+                let sounds = try await SoundAnalyzer.classify(mediaURL: url, assetID: asset.id)
+                try catalog.replaceTags(assetID: asset.id, kinds: [.sound], with: sounds)
+            } catch AnalysisError.noAudio {
+            } catch {
+                problems.append("Sound: \(error.localizedDescription)")
+            }
+
+            activity[asset.id] = Activity(title: "Transcribing dialogue", progress: 0)
+            do {
+                let names = people.compactMap(\.name)
+                let extra = dialogueVocabulary.split(whereSeparator: { $0 == "\n" || $0 == "," })
+                    .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } + names
+                let locale = dialogueLanguage.isEmpty ? Locale.current : Locale(identifier: dialogueLanguage)
+                let result = try await Transcriber.transcribe(mediaURL: url, assetID: asset.id, locale: locale,
+                                                              extraVocabulary: extra) { fraction in
+                    Task { @MainActor in
+                        self.activity[asset.id] = Activity(title: "Transcribing dialogue", progress: fraction)
+                    }
+                }
+                try catalog.replaceTranscript(assetID: asset.id, with: result.segments)
+                try catalog.replaceTags(assetID: asset.id, kinds: [.entity],
+                                        with: TextAnalyzer.entities(in: result.segments, assetID: asset.id))
+                let onScreen = try catalog.tags(forAsset: asset.id).filter { $0.kind == .text }
+                try catalog.replaceTags(assetID: asset.id, kinds: [.slate],
+                                        with: SlateParser.tags(assetID: asset.id, transcript: result.segments,
+                                                               onScreenText: onScreen))
+                if let warning = result.warning { problems.append("Dialogue: \(warning)") }
+            } catch AnalysisError.noAudio {
+                // Silent clips simply have no dialogue.
+            } catch {
+                problems.append("Dialogue: \(error.localizedDescription)")
+            }
+        }
+
+        for hook in analysisHooks where hook.isEnabled && !hook.url.isEmpty {
+            activity[asset.id] = Activity(title: "Asking \(hook.name.isEmpty ? "external A.I." : hook.name)")
+            do {
+                let body = ExternalAnalysisRequest(
+                    asset: asset, transcript: try catalog.transcript(forAsset: asset.id),
+                    tags: try catalog.tags(forAsset: asset.id))
+                let reply = try await ExternalAnalysisClient.send(hook: hook, token: Keychain.token(for: hook.id),
+                                                                 body: body)
+                try catalog.replaceTags(assetID: asset.id, kinds: [.external, .summary],
+                                        with: reply.sceneTags(for: asset))
+            } catch {
+                problems.append("\(hook.name.isEmpty ? "External A.I." : hook.name): \(error.localizedDescription)")
+            }
+        }
+
+        activity[asset.id] = nil
+        reloadSoon()
+        if !problems.isEmpty {
+            alert = "\(asset.fileName) was analysed with some parts missing:\n" + problems.joined(separator: "\n")
+        }
     }
 
-    /// Groups every unassigned face in the catalog into people, joining existing people where they match.
-    private func groupFaces() throws {
+    /// Analyses every clip on screen that has playable media, two at a time.
+    func analyzeVisible() {
+        let targets = visibleAssets.filter { library?.playablePath(for: $0) != nil && activity[$0.id] == nil }
+        guard !targets.isEmpty else { return }
+        for asset in targets { activity[asset.id] = Activity(title: "Waiting to analyse") }
+        let limiter = analysisLimiter
+        Task {
+            queueProgress = ("Analysing", 0, targets.count)
+            var finished = 0
+            await withTaskGroup(of: Void.self) { group in
+                for asset in targets {
+                    await limiter.acquire()
+                    group.addTask {
+                        await self.runAnalysis(asset)
+                        await limiter.release()
+                    }
+                    finished += 1
+                    queueProgress = ("Analysing", finished, targets.count)
+                }
+            }
+            queueProgress = nil
+        }
+    }
+
+    /// Matches this clip's new faces against a few known sightings of each person, rather than
+    /// re-reading every face in the catalogue after every clip.
+    private func groupFaces(for assetID: String) throws {
         let known = Dictionary(uniqueKeysWithValues: try catalog.people().map { ($0.id, $0) })
-        for (personID, sightingIDs) in FaceClusterer.cluster(try catalog.allFaces()) {
+        let pool = try catalog.faceReferences() + catalog.faces(forAsset: assetID).filter { $0.personID == nil }
+        for (personID, sightingIDs) in FaceClusterer.cluster(pool) {
             try catalog.assign(sightingIDs: sightingIDs, to: known[personID] ?? Person(id: personID))
         }
     }
@@ -698,4 +977,15 @@ final class AppModel {
             alert = error.localizedDescription
         }
     }
+}
+
+/// Collects import failures from concurrent tasks.
+actor FailureLog {
+    private(set) var all: [String] = []
+    func add(_ message: String) { all.append(message) }
+}
+
+actor ImportCounter {
+    private var count = 0
+    func increment() -> Int { count += 1; return count }
 }

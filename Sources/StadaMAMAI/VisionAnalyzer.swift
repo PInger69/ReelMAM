@@ -16,11 +16,18 @@ public struct VisualAnalysis: Sendable {
 /// scene classification, text recognition, face detection, and a feature print used for
 /// shot-boundary detection and for grouping faces.
 public enum VisionAnalyzer {
-    public static func analyze(mediaURL: URL, asset: Asset, sampleInterval: Double = 2,
+    /// - Parameters:
+    ///   - sampleInterval: Seconds between sampled frames. By default it grows with the length of
+    ///     the clip so a long camera roll is looked at about 600 times, not hundreds of thousands.
+    ///   - labelThreshold: How sure the recogniser must be before a scene label is kept.
+    ///   - rules: Corrections to apply to picture labels (hidden or reworded).
+    public static func analyze(mediaURL: URL, asset: Asset, sampleInterval requestedInterval: Double? = nil,
+                               labelThreshold: Double = 0.35, rules: [LabelRule] = [],
                                progress: (@Sendable (Double) -> Void)? = nil) async throws -> VisualAnalysis {
         let avAsset = AVURLAsset(url: mediaURL)
         let loaded = try await avAsset.load(.duration).seconds
         let duration = loaded.isFinite && loaded > 0 ? loaded : asset.durationSeconds
+        let sampleInterval = requestedInterval ?? min(max(2, duration / 600), 30)
         let generator = AVAssetImageGenerator(asset: avAsset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 960, height: 960)
@@ -51,20 +58,26 @@ public enum VisionAnalyzer {
             try VNImageRequestHandler(cgImage: image)
                 .perform([classify, readText, detectFaces, featurePrint, animals, humans])
 
+            let bigFaces = (detectFaces.results ?? []).filter { $0.boundingBox.width >= 0.03 }
             for animal in animals.results ?? [] {
                 guard let best = animal.labels.first, best.confidence >= 0.5 else { continue }
                 labels.append(FrameLabel(label: best.identifier.lowercased(), confidence: Double(best.confidence),
                                          timeSeconds: time))
             }
-            // How many people are in frame, in the terms a logger would use.
-            let headcount = (humans.results ?? []).filter { $0.confidence >= 0.5 }.count
-            if headcount > 0 {
-                let label = headcount == 1 ? "one person" : headcount == 2 ? "two people"
-                    : headcount <= 5 ? "small group" : "crowd"
-                labels.append(FrameLabel(label: label, confidence: 1, timeSeconds: time))
+            // Framing and shot size, in the terms a camera department would use.
+            let bodies = (humans.results ?? []).filter { $0.confidence >= 0.5 }
+            if let framing = CinemaVocabulary.framing(headcount: max(bodies.count, bigFaces.count)) {
+                labels.append(FrameLabel(label: framing, confidence: 1, timeSeconds: time))
+            }
+            if let largest = bigFaces.map({ $0.boundingBox.height }).max() {
+                labels.append(FrameLabel(label: ShotScale.classify(largestFaceHeight: Double(largest)).rawValue,
+                                         confidence: 1, timeSeconds: time))
+            } else if let tallest = bodies.map({ $0.boundingBox.height }).max() {
+                labels.append(FrameLabel(label: ShotScale.classify(tallestBodyHeight: Double(tallest)).rawValue,
+                                         confidence: 0.7, timeSeconds: time))
             }
 
-            for observation in (classify.results ?? []).filter({ $0.confidence >= 0.35 }).prefix(6) {
+            for observation in (classify.results ?? []).filter({ Double($0.confidence) >= labelThreshold }).prefix(6) {
                 labels.append(FrameLabel(label: observation.identifier.replacingOccurrences(of: "_", with: " "),
                                          confidence: Double(observation.confidence), timeSeconds: time))
             }
@@ -74,8 +87,14 @@ public enum VisionAnalyzer {
                 texts.append(FrameLabel(label: candidate.string, confidence: Double(candidate.confidence),
                                         timeSeconds: time))
             }
-            for face in detectFaces.results ?? [] where face.boundingBox.width >= 0.04 {
+            for face in bigFaces.sorted(by: { $0.boundingBox.width > $1.boundingBox.width }).prefix(4)
+            where face.boundingBox.width >= 0.04 && faces.count < 240 {
                 guard let embedding = faceEmbedding(in: image, box: face.boundingBox) else { continue }
+                // The same face in neighbouring samples adds nothing to the catalogue but weight.
+                let vector = FaceSighting.vector(from: embedding)
+                if faces.suffix(6).contains(where: {
+                    time - $0.timeSeconds < 20 && FaceClusterer.cosineSimilarity($0.vector, vector) >= 0.96
+                }) { continue }
                 faces.append(FaceSighting(
                     assetID: asset.id, timeSeconds: time,
                     x: face.boundingBox.minX, y: face.boundingBox.minY,
@@ -97,7 +116,7 @@ public enum VisionAnalyzer {
                                     durationSeconds: duration)
             + TagBuilder.ranges(assetID: asset.id, kind: .label, samples: labels, sampleInterval: sampleInterval)
             + TagBuilder.ranges(assetID: asset.id, kind: .text, samples: texts, sampleInterval: sampleInterval)
-        return VisualAnalysis(tags: tags, faces: faces)
+        return VisualAnalysis(tags: LabelRules.apply(rules, to: tags), faces: faces)
     }
 
     /// Crops the face (with a little margin) and returns its feature print as Float32 data.

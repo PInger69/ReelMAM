@@ -74,12 +74,12 @@ jobs:
           codesign --force --deep --sign - "$APP"
           codesign --verify --deep "$APP"
           mkdir -p dist
-          ditto -c -k --keepParent "$APP" dist/StadaXR-AI-MAM.zip
+          ditto -c -k --keepParent "$APP" dist/StradaXR-AI-MAM.zip
           ls -la dist
       - name: Upload the app
         uses: actions/upload-artifact@v4
         with:
-          name: StadaXR-AI-MAM
+          name: StradaXR-AI-MAM
           path: dist
       - name: Launch the app with sample clips and take screenshots
         continue-on-error: true

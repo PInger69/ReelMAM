@@ -37,7 +37,9 @@ public struct MediaLibrary: Sendable {
         }
     }
 
-    public var proxyRoot: String { storageRoot + "/Proxies" }
+    /// Overrides where proxies are written, e.g. a large volume; thumbnails stay in `storageRoot`.
+    public var proxyFolder: String?
+    public var proxyRoot: String { proxyFolder ?? storageRoot + "/Proxies" }
 
     public func thumbnailDirectory(forAssetID id: String) -> String { storageRoot + "/Thumbnails/" + id }
 

@@ -24,13 +24,13 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: StadaXR A.I. MAM
-        CFBundleName: StadaXR A.I. MAM
+        CFBundleDisplayName: StradaXR AI MAM
+        CFBundleName: StradaXR AI MAM
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
         LSMinimumSystemVersion: "14.0"
         LSApplicationCategoryType: public.app-category.video
-        NSSpeechRecognitionUsageDescription: StadaXR A.I. MAM transcribes the speech in your clips so you can search and caption them.
+        NSSpeechRecognitionUsageDescription: StradaXR AI MAM transcribes the speech in your clips so you can search and caption them.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stadaxr.mam

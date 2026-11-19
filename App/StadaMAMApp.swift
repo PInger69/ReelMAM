@@ -6,7 +6,7 @@ struct StadaMAMApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("StadaXR A.I. MAM") {
+        WindowGroup("StradaXR AI MAM") {
             ContentView()
                 .environment(model)
                 .preferredColorScheme(.dark)
@@ -36,8 +36,16 @@ struct StadaMAMApp: App {
             }
         }
         Settings {
-            SettingsView()
-                .environment(model)
+            TabView {
+                SettingsView()
+                    .tabItem { Label("General", systemImage: "gearshape") }
+                LabelRulesView()
+                    .tabItem { Label("Picture Labels", systemImage: "tag") }
+                DialogueAndStorageView()
+                    .tabItem { Label("Dialogue & Storage", systemImage: "waveform") }
+            }
+            .environment(model)
+            .frame(width: 680, height: 640)
         }
     }
 }
@@ -109,7 +117,6 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(20)
-        .frame(width: 620)
     }
 }
 

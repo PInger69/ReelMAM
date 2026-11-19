@@ -57,7 +57,7 @@ struct ContentView: View {
             model.importMedia(at: urls.map(\.path))
             return true
         }
-        .alert("StadaXR A.I. MAM", isPresented: Binding(get: { model.alert != nil },
+        .alert("StradaXR AI MAM", isPresented: Binding(get: { model.alert != nil },
                                                         set: { if !$0 { model.alert = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -80,7 +80,7 @@ struct SidebarView: View {
                 Label("All Clips", systemImage: "film.stack").badge(model.assets.count).tag(LibraryFilter.all)
                 Label("Needs Proxy", systemImage: "hourglass").tag(LibraryFilter.needsProxy)
                 Label("Has Proxy", systemImage: "checkmark.seal").tag(LibraryFilter.hasProxy)
-                Label("Transcribed", systemImage: "captions.bubble").tag(LibraryFilter.transcribed)
+                Label("Dialogue Logged", systemImage: "captions.bubble").tag(LibraryFilter.transcribed)
                 if !model.offline.isEmpty {
                     Label("Offline", systemImage: "exclamationmark.triangle")
                         .badge(model.offline.count)
@@ -260,7 +260,7 @@ struct AssetCard: View {
     @State private var hoverFraction: CGFloat?
 
     var body: some View {
-        let thumbnails = model.thumbnailPaths[asset.id] ?? []
+        let thumbnails = model.thumbnails(for: asset)
         let isSelected = model.selectedID == asset.id
         VStack(alignment: .leading, spacing: 6) {
             GeometryReader { proxy in
@@ -435,6 +435,22 @@ struct SendToEditorMenu: View {
 struct LibraryBar: View {
     @Environment(AppModel.self) private var model
 
+    /// How far a large import or batch run has got.
+    @ViewBuilder private var progress: some View {
+        if let importing = model.importProgress {
+            ProgressView(value: Double(importing.done), total: Double(max(importing.total, 1))) {
+                Text("Importing \(importing.done.formatted()) of \(importing.total.formatted())")
+            }
+            .progressViewStyle(.linear).frame(maxWidth: 260)
+        }
+        if let queue = model.queueProgress {
+            ProgressView(value: Double(queue.done), total: Double(max(queue.total, 1))) {
+                Text("\(queue.title) \(queue.done.formatted()) of \(queue.total.formatted())")
+            }
+            .progressViewStyle(.linear).frame(maxWidth: 260)
+        }
+    }
+
     var body: some View {
         @Bindable var model = model
         HStack(spacing: 12) {
@@ -449,6 +465,7 @@ struct LibraryBar: View {
                 }
                 .help("Keep this search as a bin that updates itself")
             } else {
+                progress
                 Picker("Sort", selection: $model.sort) {
                     ForEach(LibrarySort.allCases, id: \.self) { Text($0.displayName).tag($0) }
                 }

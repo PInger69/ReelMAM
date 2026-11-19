@@ -16,7 +16,19 @@ public final class Catalog: Sendable {
     public let db: DatabaseQueue
 
     public init(path: String) throws {
-        db = try DatabaseQueue(path: path)
+        var configuration = Configuration()
+        // A catalogue of a whole feature's footage is large and written to while it is read:
+        // write-ahead logging keeps the interface responsive during imports and analysis.
+        configuration.prepareDatabase { db in
+            try db.execute(sql: """
+                PRAGMA journal_mode = WAL;
+                PRAGMA synchronous = NORMAL;
+                PRAGMA cache_size = -262144;
+                PRAGMA mmap_size = 1073741824;
+                PRAGMA temp_store = MEMORY;
+                """)
+        }
+        db = try DatabaseQueue(path: path, configuration: configuration)
         try Self.migrator.migrate(db)
     }
 
@@ -157,6 +169,28 @@ public final class Catalog: Sendable {
                 t.primaryKey(["binID", "assetID"])
             }
         }
+        migrator.registerMigration("v7-editable-tags-and-scale") { db in
+            try db.alter(table: "sceneTag") { t in
+                t.add(column: "userEdited", .boolean).notNull().defaults(to: false)
+            }
+            try db.create(table: "labelRule") { t in
+                t.column("id", .text).primaryKey()
+                t.column("match", .text).notNull().unique()
+                t.column("action", .text).notNull()
+                t.column("replacement", .text).notNull().defaults(to: "")
+                t.column("isDefault", .boolean).notNull().defaults(to: false)
+            }
+            try db.create(table: "catalogSetting") { t in
+                t.column("key", .text).primaryKey()
+                t.column("value", .text).notNull()
+            }
+            // Indexes for a library of hundreds of thousands of clips.
+            try db.create(index: "asset_importedAt", on: "asset", columns: ["importedAt"])
+            try db.create(index: "asset_volumeName", on: "asset", columns: ["volumeName"])
+            try db.create(index: "asset_reelName", on: "asset", columns: ["reelName"])
+            try db.create(index: "proxy_status", on: "proxy", columns: ["status", "assetID"])
+            try db.create(index: "sceneTag_asset_kind", on: "sceneTag", columns: ["assetID", "kind"])
+        }
         return migrator
     }
 
@@ -257,7 +291,9 @@ public final class Catalog: Sendable {
 
     public func replaceTags(assetID: String, kinds: [TagKind], with tags: [SceneTag]) throws {
         try db.write { db in
-            _ = try SceneTag.filter(Column("assetID") == assetID && kinds.map(\.rawValue).contains(Column("kind")))
+            // Tags a person added or corrected survive re-analysis.
+            _ = try SceneTag.filter(Column("assetID") == assetID && kinds.map(\.rawValue).contains(Column("kind"))
+                                    && Column("userEdited") == false)
                 .deleteAll(db)
             for tag in tags { try tag.insert(db) }
             try Self.reindex(db, assetID: assetID)
@@ -281,6 +317,21 @@ public final class Catalog: Sendable {
 
     public func allFaces() throws -> [FaceSighting] {
         try db.read { try FaceSighting.fetchAll($0) }
+    }
+
+    /// A handful of already-grouped sightings for every person, enough to recognise them in a
+    /// new clip without loading every face in the catalogue.
+    public func faceReferences(perPerson limit: Int = 24) throws -> [FaceSighting] {
+        try db.read { db in
+            try FaceSighting.fetchAll(db, sql: """
+                SELECT * FROM faceSighting WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (PARTITION BY personID ORDER BY timeSeconds) AS n
+                        FROM faceSighting WHERE personID IS NOT NULL
+                    ) WHERE n <= ?
+                )
+                """, arguments: [limit])
+        }
     }
 
     public func people() throws -> [Person] {
@@ -347,7 +398,7 @@ public final class Catalog: Sendable {
         }
     }
 
-    private static func reindex(_ db: Database, assetID: String) throws {
+    static func reindex(_ db: Database, assetID: String) throws {
         try db.execute(sql: "DELETE FROM searchIndex WHERE assetID = ?", arguments: [assetID])
         guard let asset = try Asset.fetchOne(db, key: assetID) else { return }
         func add(_ kind: SearchHit.Kind, _ time: Double?, _ text: String) throws {

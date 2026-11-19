@@ -37,6 +37,12 @@ struct ContentView: View {
                     Label("Make Proxies", systemImage: "bolt.fill")
                 }
                 .help("Render a proxy for every clip that does not have one")
+                Menu {
+                    SendToEditorMenu()
+                } label: {
+                    Label("Send to Editor", systemImage: "paperplane.fill")
+                }
+                .help("Hand the clips shown, with markers and subclips, to Final Cut Pro, DaVinci Resolve or Premiere Pro")
                 Button { model.presentRecallPanel() } label: {
                     Label("Find Source", systemImage: "arrow.triangle.2.circlepath")
                 }
@@ -298,5 +304,23 @@ enum ThumbnailCache {
         guard let image = NSImage(contentsOfFile: path) else { return nil }
         cache.setObject(image, forKey: path as NSString)
         return image
+    }
+}
+
+/// One entry per editing app, each offering the camera originals or the proxies alone.
+struct SendToEditorMenu: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ForEach(EditorTarget.allCases, id: \.self) { target in
+            Menu(target.displayName) {
+                Button("Camera originals" + (target == .finalCutPro ? " with proxies attached" : "")) {
+                    model.sendToEditor(target, media: .sources)
+                }
+                Button("Proxies only (editor has no originals)") {
+                    model.sendToEditor(target, media: .proxies)
+                }
+            }
+        }
     }
 }

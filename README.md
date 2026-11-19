@@ -19,6 +19,7 @@ said and shown in it.
 | Several renders at once, automatic fallback between pipelines, every proxy verified against its source, achieved speed recorded per proxy | Built, tested |
 | FFmpeg as an optional extra for formats Apple's frameworks cannot open | Built, tested |
 | Source recall: from a proxy file, or from a Premiere XML / Resolve FCPXML / EDL, back to the high-res source | Built, tested |
+| Send to Editor: clip lists with timecode, reel, markers and subclips as FCPXML (Final Cut Pro, DaVinci Resolve) or XML (Premiere Pro), pointing at originals or at proxies only | Built; structure tested, not yet imported into the three apps |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
 | Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |
 | macOS app: library grid with hover scrub, player with JKL shuttle, frame stepping, mark in / out, markers and subclips, inspector | Written; verified only by the macOS CI build, not yet run by hand |
@@ -38,6 +39,18 @@ file's metadata. To get back to the original, it tries, strongest first:
 
 Hand it a timeline exported from the NLE and it returns the same timeline pointing at the
 sources, ready for online / conform.
+
+## Working with an editor
+
+1. **Send to Editor** writes the clips you are looking at — with markers and subclips — as a
+   file the editing app imports. Choose *camera originals* when the editor has the sources
+   (Final Cut Pro receives each clip with its proxy already attached), or *proxies only* when
+   the editor works without them.
+2. The editor cuts as usual. Every proxy matches its source's name, timecode, duration, frame
+   rate and audio layout, and is checked against the source after rendering; a proxy that
+   differs is flagged and never sent.
+3. For a proxies-only edit, export the timeline from the editing app and open it with
+   **Find Source**. Save the copy that points at the originals and import it to finish.
 
 ## Player keys
 

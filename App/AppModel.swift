@@ -242,6 +242,42 @@ final class AppModel {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
+    // MARK: Send to editor
+
+    /// Writes the clips currently shown — with their markers and subclips — as a file the
+    /// chosen editing app imports, then reveals it in Finder.
+    func sendToEditor(_ target: EditorTarget, media: EditorMedia) {
+        let clips = visibleAssets.map { asset in
+            // Only proxies that were verified against their source are handed to an editor.
+            let proxy = ((try? catalog.proxies(forAsset: asset.id)) ?? [])
+                .first { $0.status == .ready && $0.mismatch == nil && FileManager.default.fileExists(atPath: $0.path) }
+            return EditorClip(asset: asset, proxyPath: proxy?.path,
+                              markers: (try? catalog.markers(forAsset: asset.id)) ?? [])
+        }
+        let sendable = media == .proxies ? clips.filter { $0.proxyPath != nil } : clips
+        guard !sendable.isEmpty else {
+            alert = media == .proxies
+                ? "None of the clips shown has a verified proxy yet. Make proxies first."
+                : "There are no clips to send."
+            return
+        }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "StadaXR clips for \(target.displayName).\(target.fileExtension)"
+        panel.message = "Import this file into \(target.displayName)."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try EditorExport.document(for: clips, target: target, media: media)
+                .write(to: url, atomically: true, encoding: .utf8)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            let skipped = clips.count - sendable.count
+            if skipped > 0 {
+                alert = "\(skipped) clip\(skipped == 1 ? " was" : "s were") left out because \(skipped == 1 ? "it has" : "they have") no verified proxy yet."
+            }
+        } catch {
+            alert = error.localizedDescription
+        }
+    }
+
     // MARK: Source recall
 
     func presentRecallPanel() {

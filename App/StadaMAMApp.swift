@@ -20,6 +20,12 @@ struct StadaMAMApp: App {
                     }
                 }
             }
+            CommandMenu("Editor") {
+                SendToEditorMenu()
+                    .environment(model)
+                Divider()
+                Button("Find Source for Proxy or Timeline…") { model.presentRecallPanel() }
+            }
             CommandGroup(replacing: .newItem) {
                 Button("Import Media…") { model.presentImportPanel() }
                     .keyboardShortcut("i", modifiers: [.command, .shift])

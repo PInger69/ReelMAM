@@ -1,5 +1,8 @@
 import Foundation
 import Testing
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 @testable import StadaMAMCore
 
 @Suite struct TimecodeTests {
@@ -419,5 +422,88 @@ func found(_ resolution: SourceResolution) -> Found { Found(resolution.asset?.id
         #expect(asset.audioChannels == 2)
         #expect(asset.capturedAt != nil)
         #expect(probe.embeddedAssetID == "ABC")
+    }
+}
+
+@Suite struct EditorExportTests {
+    private func clips() -> [EditorClip] {
+        var a = makeAsset("/Volumes/RAID/Day 1/A001_C003.mov", start: 86400, duration: 240, reel: "A001")
+        a.width = 3840
+        a.audioChannels = 2
+        let b = makeAsset("/Volumes/RAID/Day 1/B002 & C001.braw", start: 0, duration: 120)
+        return [
+            EditorClip(asset: a, proxyPath: "/Proxies/RAID/Day 1/A001_C003.mov", markers: [
+                Marker(assetID: a.id, inFrame: 24, name: "Smile <best>", note: "use this"),
+                Marker(assetID: a.id, inFrame: 48, outFrame: 95, name: "Answer 1"),
+            ]),
+            EditorClip(asset: b),
+        ]
+    }
+
+    private func isWellFormed(_ xml: String) -> Bool {
+        XMLParser(data: Data(xml.utf8)).parse()
+    }
+
+    @Test func finalCutDocumentLinksOriginalAndProxy() throws {
+        let xml = EditorExport.document(for: clips(), target: .finalCutPro, media: .sources)
+        #expect(isWellFormed(xml))
+        #expect(xml.contains("<fcpxml version=\"1.9\">"))
+        #expect(xml.contains("name=\"FFVideoFormat3840x2160p24\" frameDuration=\"1/24s\" width=\"3840\" height=\"2160\""))
+        #expect(xml.contains("kind=\"original-media\" src=\"file:///Volumes/RAID/Day%201/A001_C003.mov\""))
+        #expect(xml.contains("kind=\"proxy-media\" src=\"file:///Proxies/RAID/Day%201/A001_C003.mov\""))
+        // Start is the source timecode (01:00:00:00 at 24 fps), so the clip keeps its timecode.
+        #expect(xml.contains("start=\"86400/24s\" duration=\"240/24s\""))
+        #expect(xml.contains("<marker start=\"86424/24s\" duration=\"1/24s\" value=\"Smile &lt;best&gt;\" note=\"use this\"/>"))
+        #expect(xml.contains("<keyword start=\"86448/24s\" duration=\"48/24s\" value=\"Answer 1\"/>"))
+        #expect(xml.contains("B002%20&amp;%20C001.braw"))
+        // Our own reader sees the originals, not the proxies.
+        let doc = try #require(TimelineDocument(text: xml))
+        #expect(doc.references.map(\.path) == ["/Volumes/RAID/Day 1/A001_C003.mov", "/Volumes/RAID/Day 1/B002 & C001.braw"])
+    }
+
+    @Test func fractionalRatesStayExact() {
+        var asset = makeAsset("/Volumes/RAID/A.mov", start: 86400, duration: 24)
+        asset.frameRateNum = 24000
+        asset.frameRateDen = 1001
+        #expect(EditorExport.time(86400, asset.frameRate) == "86486400/24000s")
+        let xml = EditorExport.document(for: [EditorClip(asset: asset)], target: .davinciResolve, media: .sources)
+        #expect(xml.contains("frameDuration=\"1001/24000s\""))
+        #expect(xml.contains("tcFormat=\"NDF\""))
+    }
+
+    @Test func premiereDocumentCarriesTimecodeMarkersAndSubclips() throws {
+        let xml = EditorExport.document(for: clips(), target: .premierePro, media: .sources)
+        #expect(isWellFormed(xml))
+        #expect(xml.contains("<pathurl>file://localhost/Volumes/RAID/Day%201/A001_C003.mov</pathurl>"))
+        #expect(xml.contains("<string>01:00:00:00</string><frame>86400</frame><displayformat>NDF</displayformat><reel><name>A001</name></reel>"))
+        #expect(xml.contains("<timebase>24</timebase><ntsc>FALSE</ntsc>"))
+        #expect(xml.contains("<marker><name>Smile &lt;best&gt;</name><comment>use this</comment><in>24</in><out>-1</out></marker>"))
+        #expect(xml.contains("<name>Answer 1</name>"))
+        #expect(xml.contains("<in>48</in><out>96</out>"))
+        #expect(xml.contains("<file id=\"file-1\"/>"))
+        let doc = try #require(TimelineDocument(text: xml))
+        #expect(doc.format == .xmeml)
+        #expect(doc.references.count == 2)
+    }
+
+    @Test func proxyOnlyHandoverComesBackToSources() throws {
+        let catalog = try Catalog.inMemory()
+        let source = try catalog.save(makeAsset("/Volumes/RAID/Day 1/A001_C003.mov", start: 86400))
+        try catalog.save(ProxyRecord(assetID: source.id, path: "/Proxies/A001_C003.mov", preset: .h264_720, status: .ready))
+        let noProxy = try catalog.save(makeAsset("/Volumes/RAID/Day 1/Z009.mov"))
+        let clips = [EditorClip(asset: source, proxyPath: "/Proxies/A001_C003.mov"), EditorClip(asset: noProxy)]
+        let resolver = SourceResolver(catalog: catalog)
+
+        for target in EditorTarget.allCases {
+            let handed = EditorExport.document(for: clips, target: target, media: .proxies)
+            // Clips without a proxy are left out, and nothing points at a source.
+            #expect(!handed.contains("Z009"))
+            #expect(!handed.contains("/Volumes/RAID"))
+            let doc = try #require(TimelineDocument(text: handed))
+            #expect(doc.references.map(\.path) == ["/Proxies/A001_C003.mov"])
+            let back = doc.relinked { try? resolver.resolve($0.clue).asset }
+            #expect(back.contains("/Volumes/RAID/Day%201/A001_C003.mov"))
+            #expect(!back.contains("/Proxies/"))
+        }
     }
 }

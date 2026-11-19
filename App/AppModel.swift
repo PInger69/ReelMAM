@@ -961,6 +961,38 @@ final class AppModel {
         perform { try catalog.deleteEmptyPeople() }
     }
 
+    /// Copies a subclip's range out of the camera original into a file of its own.
+    func exportSubclip(of asset: Asset, marker: Marker) {
+        guard let library, let outFrame = marker.outFrame else { return }
+        guard FileManager.default.fileExists(atPath: asset.sourcePath) else {
+            alert = "\(asset.fileName) is offline. Reconnect its volume and try again."
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = "Export"
+        panel.message = "Choose where to save the subclip. It is copied from the original without re-encoding."
+        guard panel.runModal() == .OK, let folder = panel.url?.path else { return }
+        activity[asset.id] = Activity(title: "Exporting subclip", progress: 0)
+        Task.detached(priority: .userInitiated) {
+            do {
+                let path = try await library.exportSubclip(of: asset, inFrame: marker.inFrame, outFrame: outFrame,
+                                                           intoFolder: folder) { fraction in
+                    Task { @MainActor in
+                        self.activity[asset.id] = Activity(title: "Exporting subclip", progress: fraction)
+                    }
+                }
+                await self.setActivity(asset.id, nil)
+                await self.revealInFinder(path)
+            } catch {
+                await self.setActivity(asset.id, nil)
+                await self.show("\(asset.fileName): \(error.localizedDescription)")
+            }
+        }
+    }
+
     func exportCaptions(for asset: Asset, webVTT: Bool) {
         guard let segments = try? catalog.transcript(forAsset: asset.id), !segments.isEmpty else { return }
         let panel = NSSavePanel()

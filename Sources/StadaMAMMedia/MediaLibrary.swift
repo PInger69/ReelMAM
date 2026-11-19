@@ -281,6 +281,33 @@ public struct MediaLibrary: Sendable {
         try await Self.offload { try tools.render(plan, progress: progress) }
     }
 
+    // MARK: Subclips
+
+    /// The file name a subclip of a clip is given: the clip's name, then the range's timecodes.
+    public static func subclipFileName(for asset: Asset, inFrame: Int, outFrame: Int) -> String {
+        func compact(_ frame: Int) -> String {
+            asset.timecode(atFrame: frame).description
+                .replacingOccurrences(of: ":", with: "").replacingOccurrences(of: ";", with: "")
+        }
+        let base = (asset.fileName as NSString).deletingPathExtension
+        return "\(base)_\(compact(inFrame))-\(compact(outFrame)).mov"
+    }
+
+    /// Copies a marked range of a camera original into a file of its own, without re-encoding.
+    /// Returns the path written.
+    @discardableResult
+    public func exportSubclip(of asset: Asset, inFrame: Int, outFrame: Int, intoFolder folder: String,
+                              progress: (@Sendable (Double) -> Void)? = nil) async throws -> String {
+        guard asset.decodePath == .avFoundation else { throw MediaError.decoderUnavailable(asset.formatName) }
+        let path = folder + "/" + Self.subclipFileName(for: asset, inFrame: inFrame, outFrame: outFrame)
+        #if os(macOS)
+        try await NativeMedia.exportRange(of: asset, inFrame: inFrame, outFrame: outFrame, to: path, progress: progress)
+        return path
+        #else
+        throw MediaError.ffmpegFailed("subclip export needs macOS")
+        #endif
+    }
+
     /// The best file to play or analyse: a ready proxy if there is one, else the source.
     public func playablePath(for asset: Asset) -> String? {
         let fm = FileManager.default

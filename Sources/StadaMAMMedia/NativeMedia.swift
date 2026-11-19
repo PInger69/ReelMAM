@@ -340,7 +340,9 @@ public enum NativeMedia {
     }
 
     /// Builds the single sample of a QuickTime timecode track: the start frame number.
-    private static func makeTimecodeSample(for asset: Asset, duration: CMTime) throws -> CMSampleBuffer {
+    /// - Parameter time: where on the writer's timeline the sample sits.
+    private static func makeTimecodeSample(for asset: Asset, duration: CMTime,
+                                           at time: CMTime = .zero) throws -> CMSampleBuffer {
         var flags = kCMTimeCodeFlag_24HourMax
         if asset.dropFrame { flags |= kCMTimeCodeFlag_DropFrame }
         var extensions: [String: Any] = [:]
@@ -369,7 +371,7 @@ public enum NativeMedia {
                                                offsetIntoDestination: 0, dataLength: 4)
         guard status == kCMBlockBufferNoErr else { throw RenderError.cannotConfigure("the timecode sample") }
 
-        var timing = CMSampleTimingInfo(duration: duration, presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+        var timing = CMSampleTimingInfo(duration: duration, presentationTimeStamp: time, decodeTimeStamp: .invalid)
         var sampleSize = 4
         var sample: CMSampleBuffer?
         status = CMSampleBufferCreate(
@@ -379,6 +381,107 @@ public enum NativeMedia {
             sampleBufferOut: &sample)
         guard status == noErr, let sample else { throw RenderError.cannotConfigure("the timecode sample") }
         return sample
+    }
+
+    // MARK: Subclip export
+
+    /// Writes frames `inFrame...outFrame` of a clip as a file of its own, without re-encoding:
+    /// picture and sound are copied as they are, so nothing is lost and it is fast. The new
+    /// file's timecode starts where the range starts, so it still lines up with the original.
+    ///
+    /// Exact to the frame for intra-frame formats such as ProRes. A long-GOP source (H.264,
+    /// HEVC) can only be cut on a key frame without re-encoding, so there the copy may begin
+    /// a little earlier than asked.
+    public static func exportRange(of asset: Asset, inFrame: Int, outFrame: Int, to outputPath: String,
+                                   progress: (@Sendable (Double) -> Void)? = nil) async throws {
+        let first = max(inFrame, 0)
+        let last = min(max(outFrame, first), max(asset.durationFrames - 1, first))
+        let scale = CMTimeScale(asset.frameRateNum)
+        let start = CMTime(value: CMTimeValue(first * asset.frameRateDen), timescale: scale)
+        let length = CMTime(value: CMTimeValue((last - first + 1) * asset.frameRateDen), timescale: scale)
+        let range = CMTimeRange(start: start, duration: length)
+
+        let source = AVURLAsset(url: URL(fileURLWithPath: asset.sourcePath))
+        guard let videoTrack = try await source.loadTracks(withMediaType: .video).first else {
+            throw RenderError.noVideoTrack
+        }
+        let audioTracks = try await source.loadTracks(withMediaType: .audio)
+
+        let outputURL = URL(fileURLWithPath: outputPath)
+        try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: outputURL)
+        let reader = try AVAssetReader(asset: source)
+        reader.timeRange = range
+        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+
+        // Samples are passed through untouched; the writer is told their format up front.
+        var pairs: [(AVAssetReaderTrackOutput, AVAssetWriterInput)] = []
+        for track in [videoTrack] + audioTracks {
+            let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+            output.alwaysCopiesSampleData = false
+            let hint = try await track.load(.formatDescriptions).first
+            let input = AVAssetWriterInput(mediaType: track.mediaType, outputSettings: nil, sourceFormatHint: hint)
+            input.expectsMediaDataInRealTime = false
+            if track.mediaType == .video { input.mediaTimeScale = scale }
+            guard reader.canAdd(output), writer.canAdd(input) else {
+                if track.mediaType == .video { throw RenderError.cannotConfigure("the picture copy") }
+                continue
+            }
+            reader.add(output)
+            writer.add(input)
+            pairs.append((output, input))
+        }
+        writer.movieTimeScale = scale
+
+        // The subclip's own timecode: the source's, moved on to the first frame of the range.
+        var shifted = asset
+        shifted.startTimecodeFrames = asset.startTimecodeFrames + first
+        let timecodeInput = AVAssetWriterInput(mediaType: .timecode, outputSettings: nil)
+        let timecodeSample = try makeTimecodeSample(for: shifted, duration: length, at: start)
+        let timecodeType = AVAssetTrack.AssociationType.timecode.rawValue
+        if let picture = pairs.first?.1, writer.canAdd(timecodeInput),
+           picture.canAddTrackAssociation(withTrackOf: timecodeInput, type: timecodeType) {
+            picture.addTrackAssociation(withTrackOf: timecodeInput, type: timecodeType)
+            writer.add(timecodeInput)
+        } else {
+            throw RenderError.cannotConfigure("the timecode track")
+        }
+        writer.metadata = [metadataItem(ProxyMetadataKey.sourcePath, asset.sourcePath)]
+
+        guard reader.startReading() else {
+            throw RenderError.failed(reader.error?.localizedDescription ?? "could not start reading")
+        }
+        guard writer.startWriting() else {
+            throw RenderError.failed(writer.error?.localizedDescription ?? "could not start writing")
+        }
+        // The session starts at the range's start, so the new file begins at zero.
+        writer.startSession(atSourceTime: start)
+        timecodeInput.append(timecodeSample)
+        timecodeInput.markAsFinished()
+
+        let total = max(length.seconds, 0.001)
+        await withTaskGroup(of: Void.self) { group in
+            for (index, pair) in pairs.enumerated() {
+                group.addTask {
+                    await pump(from: pair.0, to: pair.1, label: "copy-\(index)") { sample in
+                        guard index == 0 else { return }
+                        let time = (CMSampleBufferGetPresentationTimeStamp(sample) - start).seconds
+                        if time.isFinite { progress?(min(max(time / total, 0), 1)) }
+                    }
+                }
+            }
+        }
+        if reader.status == .failed {
+            writer.cancelWriting()
+            throw RenderError.failed(reader.error?.localizedDescription ?? "reading stopped")
+        }
+        writer.endSession(atSourceTime: range.end)
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw RenderError.failed(writer.error?.localizedDescription ?? "writing stopped")
+        }
+        progress?(1)
     }
 
     // MARK: Thumbnails

@@ -141,6 +141,22 @@ public final class Catalog: Sendable {
             }
             try db.create(index: "asset_fingerprint", on: "asset", columns: ["fingerprint"])
         }
+        migrator.registerMigration("v6-bins") { db in
+            try db.create(table: "bin") { t in
+                t.column("id", .text).primaryKey()
+                t.column("name", .text).notNull()
+                t.column("parentID", .text).indexed().references("bin", onDelete: .cascade)
+                t.column("smartQuery", .text)
+                t.column("sortIndex", .integer).notNull()
+                t.column("createdAt", .datetime).notNull()
+            }
+            try db.create(table: "binItem") { t in
+                t.column("binID", .text).notNull().references("bin", onDelete: .cascade)
+                t.column("assetID", .text).notNull().indexed().references("asset", onDelete: .cascade)
+                t.column("addedAt", .datetime).notNull()
+                t.primaryKey(["binID", "assetID"])
+            }
+        }
         return migrator
     }
 

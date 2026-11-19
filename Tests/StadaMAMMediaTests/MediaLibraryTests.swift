@@ -217,6 +217,33 @@ struct MediaLibraryTests {
         #expect(try library.catalog.allAssets().count == 2)
     }
 
+    @Test func shareMountedUnderAnotherNameIsPickedUp() async throws {
+        let library = try makeLibrary()
+        let volumes = root + "/Volumes"
+        let asset = try await library.importFile(at: try makeSource("S001_C001.mov"))
+        // The share comes back as "RAID-1", as macOS does when the old mount point is taken.
+        try FileManager.default.moveItem(atPath: volumes + "/RAID", toPath: volumes + "/RAID-1")
+        try FileManager.default.createDirectory(atPath: volumes + "/Other/Day 1", withIntermediateDirectories: true)
+        #expect(try library.offlineAssets().count == 1)
+        let found = try library.remapRemountedVolumes(volumesRoot: volumes)
+        #expect(found.map(\.id) == [asset.id])
+        #expect(try library.catalog.asset(id: asset.id)?.sourcePath == volumes + "/RAID-1/Day 1/S001_C001.mov")
+        #expect(try library.offlineAssets().isEmpty)
+        #expect(try library.remapRemountedVolumes(volumesRoot: volumes).isEmpty)
+    }
+
+    @Test func timelineFromAWindowsEditorResolves() async throws {
+        let library = try makeLibrary()
+        let asset = try await library.importFile(at: try makeSource("T001_C001.mov"))
+        let mappings = [PathMapping(macPrefix: root + "/Volumes/RAID", editorPrefix: "Z:\\Media")]
+        let xml = EditorExport.document(for: [EditorClip(asset: asset)], target: .premierePro, media: .sources,
+                                        pathMappings: mappings)
+        #expect(xml.contains("file://localhost/Z%3A/Media/Day%201/T001_C001.mov"))
+        let relink = try #require(try library.relinkTimeline(text: xml, pathMappings: mappings))
+        #expect(relink.resolutions.first?.resolution.evidence == .sourcePath)
+        #expect(relink.relinkedText.contains(asset.sourcePath.replacingOccurrences(of: " ", with: "%20")))
+    }
+
     @Test func reimportingAMovedOriginalKeepsItsIdentity() async throws {
         let library = try makeLibrary()
         let original = try makeSource("R001_C001.mov")

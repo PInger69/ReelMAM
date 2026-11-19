@@ -67,20 +67,50 @@ struct ContentView: View {
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @State private var renaming: Bin?
+    @State private var newName = ""
 
     var body: some View {
         List(selection: Binding<LibraryFilter?>(get: { model.filter }, set: { model.select(filter: $0 ?? .all) })) {
             Section("Library") {
-                Label("All Clips", systemImage: "film.stack").tag(LibraryFilter.all)
+                Label("All Clips", systemImage: "film.stack").badge(model.assets.count).tag(LibraryFilter.all)
                 Label("Needs Proxy", systemImage: "hourglass").tag(LibraryFilter.needsProxy)
                 Label("Has Proxy", systemImage: "checkmark.seal").tag(LibraryFilter.hasProxy)
                 Label("Transcribed", systemImage: "captions.bubble").tag(LibraryFilter.transcribed)
                 if !model.offline.isEmpty {
-                    Label("Offline (\(model.offline.count))", systemImage: "exclamationmark.triangle")
+                    Label("Offline", systemImage: "exclamationmark.triangle")
+                        .badge(model.offline.count)
                         .tag(LibraryFilter.offline)
                         .contextMenu {
                             Button("Locate Missing Originals…") { model.presentLocateMissingPanel() }
                         }
+                }
+            }
+            Section {
+                OutlineGroup(model.binTree, children: \.children) { node in
+                    binRow(node.bin)
+                }
+                if model.bins.isEmpty {
+                    Text("Drag clips onto a bin, or save a search as a smart bin.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            } header: {
+                HStack {
+                    Text("Bins")
+                    Spacer()
+                    Button { startRenaming(model.newBin()) } label: { Image(systemName: "plus") }
+                        .buttonStyle(.plain)
+                        .help("New bin")
+                }
+            }
+            if model.volumes.count > 1 || model.volumes.first?.name != "This Mac" {
+                Section("Locations") {
+                    ForEach(model.volumes, id: \.name) { volume in
+                        Label(volume.name, systemImage: volume.name == "This Mac" ? "laptopcomputer" : "externaldrive")
+                            .badge(volume.count)
+                            .tag(LibraryFilter.volume(volume.name))
+                    }
                 }
             }
             if !model.people.isEmpty {
@@ -94,6 +124,37 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .alert("Name Bin", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Save") {
+                if let bin = renaming { model.rename(bin, to: newName) }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
+        }
+    }
+
+    private func binRow(_ bin: Bin) -> some View {
+        Label(bin.name, systemImage: bin.isSmart ? "sparkle.magnifyingglass" : "folder")
+            .badge(model.binCounts[bin.id] ?? 0)
+            .tag(LibraryFilter.bin(bin.id))
+            .dropDestination(for: URL.self) { urls, _ in
+                model.add(paths: urls.map(\.path), to: bin)
+                return !bin.isSmart
+            }
+            .contextMenu {
+                if !bin.isSmart {
+                    Button("New Bin Inside") { startRenaming(model.newBin(inside: bin)) }
+                }
+                Button("Rename…") { startRenaming(bin) }
+                Divider()
+                Button("Delete Bin", role: .destructive) { model.delete(bin) }
+            }
+    }
+
+    private func startRenaming(_ bin: Bin) {
+        newName = bin.name
+        renaming = bin
     }
 }
 
@@ -116,21 +177,39 @@ struct LibraryGridView: View {
                 ContentUnavailableView.search(text: model.searchText)
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 18) {
-                        ForEach(assets) { asset in
-                            AssetCard(asset: asset)
-                                .onTapGesture { select(asset) }
-                                // Drag a clip straight into an editing app's bin or timeline.
-                                .draggable(URL(fileURLWithPath: asset.sourcePath))
-                                .contextMenu { AssetActions(asset: asset) }
+                    LazyVGrid(columns: columns, spacing: 18, pinnedViews: [.sectionHeaders]) {
+                        ForEach(model.visibleGroups) { group in
+                            Section {
+                                ForEach(group.assets) { asset in
+                                    AssetCard(asset: asset)
+                                        .onTapGesture { select(asset) }
+                                        // Drag a clip onto a bin, or straight into an editing app.
+                                        .draggable(URL(fileURLWithPath: asset.sourcePath))
+                                        .contextMenu { AssetActions(asset: asset) }
+                                }
+                            } header: {
+                                if !group.title.isEmpty {
+                                    HStack {
+                                        Text(group.title).font(.headline)
+                                        Text("\(group.assets.count)").foregroundStyle(.secondary)
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 5)
+                                    .background(.bar, in: RoundedRectangle(cornerRadius: 6))
+                                }
+                            }
                         }
                     }
                     .padding(16)
                 }
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !model.assets.isEmpty { LibraryBar() }
+        }
         .background(Color(nsColor: .underPageBackgroundColor))
-        .navigationTitle("Library")
+        .navigationTitle(model.currentBin?.name ?? "Library")
         .navigationSubtitle("\(assets.count) clip\(assets.count == 1 ? "" : "s")")
     }
 
@@ -153,6 +232,16 @@ struct AssetActions: View {
             }
         }
         Button("Analyse with A.I.") { model.analyze(asset) }
+        Menu("Add to Bin") {
+            ForEach(model.bins.filter { !$0.isSmart }) { bin in
+                Button(bin.name) { model.add(asset, to: bin) }
+            }
+            if model.bins.contains(where: { !$0.isSmart }) { Divider() }
+            Button("New Bin") { model.add(asset, to: model.newBin()) }
+        }
+        if let bin = model.currentBin, !bin.isSmart {
+            Button("Remove from “\(bin.name)”") { model.remove(asset, from: bin) }
+        }
         Divider()
         Button("Reveal Source in Finder") { model.revealInFinder(asset.sourcePath) }
         if model.offline.contains(asset.id) {
@@ -335,5 +424,41 @@ struct SendToEditorMenu: View {
                 }
             }
         }
+    }
+}
+
+/// Sort and group controls above the clips, and "save as smart bin" while searching.
+struct LibraryBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        HStack(spacing: 12) {
+            if model.isSearching {
+                Text("\(model.visibleAssets.count) result\(model.visibleAssets.count == 1 ? "" : "s")")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    model.saveSearchAsSmartBin()
+                } label: {
+                    Label("Save as Smart Bin", systemImage: "sparkle.magnifyingglass")
+                }
+                .help("Keep this search as a bin that updates itself")
+            } else {
+                Picker("Sort", selection: $model.sort) {
+                    ForEach(LibrarySort.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .fixedSize()
+                Picker("Group", selection: $model.grouping) {
+                    ForEach(LibraryGrouping.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .fixedSize()
+                Spacer()
+            }
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(.bar)
     }
 }

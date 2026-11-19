@@ -514,3 +514,121 @@ func found(_ resolution: SourceResolution) -> Found { Found(resolution.asset?.id
         }
     }
 }
+
+@Suite struct BinTests {
+    @Test func binsNestAndSmartBinsFillThemselves() throws {
+        let catalog = try Catalog.inMemory()
+        let a = try catalog.save(makeAsset("/Volumes/RAID/Day1/A001_C001.mov"))
+        let b = try catalog.save(makeAsset("/Volumes/RAID/Day1/A001_C002.mov"))
+        let c = try catalog.save(makeAsset("/Volumes/RAID/Day2/Interview_Mayor.mov"))
+
+        let project = Bin(name: "Harbour Film")
+        let selects = Bin(name: "Selects", parentID: project.id)
+        let interviews = Bin(name: "Interviews", parentID: project.id, smartQuery: "interview")
+        for bin in [project, selects, interviews] { try catalog.save(bin) }
+        try catalog.add(assetIDs: [a.id], toBin: project.id)
+        try catalog.add(assetIDs: [b.id, b.id], toBin: selects.id)
+
+        #expect(try catalog.assetIDs(inBin: selects.id) == [b.id])
+        #expect(try catalog.assetIDs(inBin: interviews.id) == [c.id])
+        // A bin shows its own clips plus everything in the bins inside it, smart ones included.
+        #expect(try catalog.assetIDs(inBin: project.id) == [a.id, b.id, c.id])
+        #expect(try catalog.binCounts() == [project.id: 3, selects.id: 1, interviews.id: 1])
+        #expect(try catalog.binIDs(containing: b.id) == [selects.id])
+
+        // The smart bin picks up later work without being touched.
+        try catalog.replaceTranscript(assetID: a.id, with: [
+            TranscriptSegment(assetID: a.id, startSeconds: 0, endSeconds: 2, text: "This interview is rolling"),
+        ])
+        #expect(try catalog.assetIDs(inBin: interviews.id) == [a.id, c.id])
+
+        let tree = BinNode.tree(from: try catalog.bins())
+        #expect(tree.map(\.bin.name) == ["Harbour Film"])
+        #expect(tree[0].children?.map(\.bin.name) == ["Interviews", "Selects"])
+
+        try catalog.remove(assetIDs: [b.id], fromBin: selects.id)
+        #expect(try catalog.assetIDs(inBin: selects.id).isEmpty)
+        // Deleting a bin removes its nested bins but never the clips.
+        try catalog.deleteBin(id: project.id)
+        #expect(try catalog.bins().isEmpty)
+        #expect(try catalog.allAssets().count == 3)
+        // Deleting a clip removes it from its bins.
+        let keep = Bin(name: "Keep")
+        try catalog.save(keep)
+        try catalog.add(assetIDs: [a.id], toBin: keep.id)
+        try catalog.deleteAsset(id: a.id)
+        #expect(try catalog.assetIDs(inBin: keep.id).isEmpty)
+    }
+
+    @Test func sortingAndGrouping() {
+        var a = makeAsset("/Volumes/RAID/Day1/clip10.mov", duration: 100, reel: "A001")
+        var b = makeAsset("/Volumes/RAID/Day1/clip2.mov", duration: 300, reel: "A001")
+        var c = makeAsset("/Volumes/NAS/Day2/Clip1.mov", duration: 200)
+        a.rating = 5
+        b.capturedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        c.capturedAt = Date(timeIntervalSince1970: 1_800_090_000)
+        c.fileSize = 9
+        let all = [a, b, c]
+        #expect(LibrarySort.name.sorted(all).map(\.fileName) == ["Clip1.mov", "clip2.mov", "clip10.mov"])
+        #expect(LibrarySort.duration.sorted(all).map(\.fileName) == ["clip2.mov", "Clip1.mov", "clip10.mov"])
+        #expect(LibrarySort.rating.sorted(all).first?.fileName == "clip10.mov")
+        #expect(LibrarySort.captured.sorted(all).map(\.fileName) == ["Clip1.mov", "clip2.mov", "clip10.mov"])
+        #expect(LibrarySort.size.sorted(all).first?.fileName == "Clip1.mov")
+
+        let byVolume = LibraryGrouping.volume.groups(LibrarySort.name.sorted(all))
+        #expect(byVolume.map(\.title) == ["NAS", "RAID"])
+        #expect(byVolume[1].assets.map(\.fileName) == ["clip2.mov", "clip10.mov"])
+        #expect(LibraryGrouping.reel.groups(all).map(\.title) == ["A001", "No reel"])
+        #expect(LibraryGrouping.folder.groups(all).map(\.title) == ["/Volumes/NAS/Day2", "/Volumes/RAID/Day1"])
+        #expect(LibraryGrouping.none.groups(all).count == 1)
+        #expect(LibraryGrouping.none.groups([]).isEmpty)
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        #expect(LibraryGrouping.day.groups(LibrarySort.captured.sorted(all), calendar: utc).map(\.title)
+            == ["2027-01-16", "2027-01-15", "Unknown date"])
+    }
+}
+
+@Suite struct NetworkPathTests {
+    let mappings = [
+        PathMapping(macPrefix: "/Volumes/Media", editorPrefix: "Z:\\Media"),
+        PathMapping(macPrefix: "/Volumes/Media/Proxies/", editorPrefix: "/mnt/proxies"),
+        PathMapping(macPrefix: "/Volumes/NAS", editorPrefix: "\\\\server\\nas"),
+    ]
+
+    @Test func macPathsBecomeEditorPaths() {
+        #expect(PathMapping.toEditor("/Volumes/Media/Day 1/A001.mov", using: mappings) == "/Z:/Media/Day 1/A001.mov")
+        // The most specific mapping wins.
+        #expect(PathMapping.toEditor("/Volumes/Media/Proxies/A001.mov", using: mappings) == "/mnt/proxies/A001.mov")
+        #expect(PathMapping.toEditor("/Volumes/NAS/x.mov", using: mappings) == "//server/nas/x.mov")
+        #expect(PathMapping.toEditor("/Volumes/MediaOther/x.mov", using: mappings) == "/Volumes/MediaOther/x.mov")
+    }
+
+    @Test func editorPathsComeBackToTheMac() {
+        #expect(PathMapping.toMac("/Z:/Media/Day 1/A001.mov", using: mappings) == "/Volumes/Media/Day 1/A001.mov")
+        #expect(PathMapping.toMac("z:\\media\\Day 1\\A001.mov", using: mappings) == "/Volumes/Media/Day 1/A001.mov")
+        #expect(PathMapping.toMac("/mnt/proxies/A001.mov", using: mappings) == "/Volumes/Media/Proxies/A001.mov")
+        #expect(PathMapping.toMac("//server/nas/x.mov", using: mappings) == "/Volumes/NAS/x.mov")
+        #expect(PathMapping.toMac("/somewhere/else.mov", using: mappings) == "/somewhere/else.mov")
+    }
+
+    @Test func exportsForAWindowsEditorUseItsDriveLetters() throws {
+        let asset = makeAsset("/Volumes/Media/Day 1/A001_C003.mov", start: 86400)
+        let clip = EditorClip(asset: asset, proxyPath: "/Volumes/Media/Proxies/A001_C003.mov")
+        let premiere = EditorExport.document(for: [clip], target: .premierePro, media: .sources, pathMappings: mappings)
+        #expect(premiere.contains("<pathurl>file://localhost/Z%3A/Media/Day%201/A001_C003.mov</pathurl>"))
+        let resolve = EditorExport.document(for: [clip], target: .davinciResolve, media: .proxies, pathMappings: mappings)
+        #expect(resolve.contains("src=\"file:///mnt/proxies/A001_C003.mov\""))
+        // And a timeline written on that Windows machine is understood on the way back.
+        let doc = try #require(TimelineDocument(text: premiere))
+        #expect(doc.references.first?.path.map { PathMapping.toMac($0, using: mappings) } == asset.sourcePath)
+    }
+
+    @Test func remountedVolumeCandidates() {
+        let candidates = VolumeRemapper.candidates(for: "/Volumes/Media/Day 1/A001.mov", volumesRoot: "/Volumes",
+                                                   mountedVolumes: ["Macintosh HD", "Media-1", "Backup", "Media"])
+        #expect(candidates == ["/Volumes/Media-1/Day 1/A001.mov", "/Volumes/Backup/Day 1/A001.mov",
+                               "/Volumes/Macintosh HD/Day 1/A001.mov"])
+        #expect(VolumeRemapper.candidates(for: "/Users/ed/A001.mov", volumesRoot: "/Volumes", mountedVolumes: ["Media"]).isEmpty)
+    }
+}

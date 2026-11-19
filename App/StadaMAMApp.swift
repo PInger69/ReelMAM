@@ -60,11 +60,31 @@ struct SettingsView: View {
                 }
             }
             .pickerStyle(.radioGroup)
+            Section("Editors on other computers") {
+                Toggle("Write editor files with the other computer's paths", isOn: $model.editorIsOnAnotherComputer)
+                ForEach($model.pathMappings) { $mapping in
+                    HStack {
+                        TextField("On this Mac", text: $mapping.macPrefix, prompt: Text("/Volumes/Media"))
+                        Image(systemName: "arrow.right")
+                        TextField("On the editor's computer", text: $mapping.editorPrefix, prompt: Text("Z:\\Media or /mnt/media"))
+                        Button {
+                            model.pathMappings.removeAll { $0.id == mapping.id }
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .labelsHidden()
+                }
+                Button("Add Path Mapping") {
+                    model.pathMappings.append(PathMapping(macPrefix: "", editorPrefix: ""))
+                }
+            }
             Text("Every proxy keeps its source's name, timecode, duration, frame rate and audio layout, so Premiere Pro, DaVinci Resolve and Final Cut Pro can attach it to the original.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
         .padding(20)
-        .frame(width: 520)
+        .frame(width: 620)
     }
 }

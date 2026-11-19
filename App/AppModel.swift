@@ -11,6 +11,8 @@ enum LibraryFilter: Hashable {
     case transcribed
     case offline
     case person(String)
+    case bin(String)
+    case volume(String)
 }
 
 struct Activity: Equatable {
@@ -74,6 +76,26 @@ final class AppModel {
     /// Set when a search hit or list row asks the player to jump.
     var pendingSeekSeconds: Double?
 
+    private(set) var bins: [Bin] = []
+    private(set) var binCounts: [String: Int] = [:]
+    private var binAssets: Set<String> = []
+    /// Volumes (drives and network shares) that hold catalogued clips, with clip counts.
+    private(set) var volumes: [(name: String, count: Int)] = []
+    var sort: LibrarySort {
+        didSet { UserDefaults.standard.set(sort.rawValue, forKey: "librarySort") }
+    }
+    var grouping: LibraryGrouping {
+        didSet { UserDefaults.standard.set(grouping.rawValue, forKey: "libraryGrouping") }
+    }
+    /// Where an editor on another computer sees this Mac's storage.
+    var pathMappings: [PathMapping] {
+        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(pathMappings), forKey: "pathMappings") }
+    }
+    /// Write editor files with the other computer's paths (see `pathMappings`).
+    var editorIsOnAnotherComputer: Bool {
+        didSet { UserDefaults.standard.set(editorIsOnAnotherComputer, forKey: "editorIsOnAnotherComputer") }
+    }
+
     private(set) var withProxy: Set<String> = []
     private(set) var withTranscript: Set<String> = []
     /// Clips whose original is not currently reachable (moved, renamed, or volume not mounted).
@@ -91,6 +113,12 @@ final class AppModel {
 
         let naming = UserDefaults.standard.string(forKey: "proxyNaming").flatMap(ProxyNaming.init(rawValue:)) ?? .sameName
         proxyNaming = naming
+        let defaults = UserDefaults.standard
+        sort = defaults.string(forKey: "librarySort").flatMap(LibrarySort.init(rawValue:)) ?? .imported
+        grouping = defaults.string(forKey: "libraryGrouping").flatMap(LibraryGrouping.init(rawValue:)) ?? .none
+        pathMappings = defaults.data(forKey: "pathMappings")
+            .flatMap { try? JSONDecoder().decode([PathMapping].self, from: $0) } ?? []
+        editorIsOnAnotherComputer = defaults.bool(forKey: "editorIsOnAnotherComputer")
         makesProxiesOnImport = UserDefaults.standard.object(forKey: "makesProxiesOnImport") as? Bool ?? true
         defaultPreset = UserDefaults.standard.string(forKey: "defaultPreset").flatMap(ProxyPreset.init(rawValue:))
             ?? .proResProxyHalf
@@ -107,7 +135,19 @@ final class AppModel {
         library = MediaLibrary(catalog: catalog, tools: FFmpegTools.locate(), storageRoot: storage.path,
                                naming: naming, pipelines: RenderPipeline.appleSilicon)
         alert = startupProblem
+        // Shares that were remounted under another name are picked up now and whenever a volume appears.
+        _ = try? library?.remapRemountedVolumes()
         reload()
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didMountNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.volumesChanged() }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didUnmountNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.volumesChanged() }
+        }
         // Demonstration launch: import a folder straight away and open the first clip.
         if let demoMedia = ProcessInfo.processInfo.environment["STADAMAM_DEMO_MEDIA"] {
             opensFirstClip = true
@@ -121,8 +161,27 @@ final class AppModel {
 
     var selectedAsset: Asset? { assets.first { $0.id == selectedID } }
 
+    var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    /// The clips on screen: search results in relevance order, otherwise the current
+    /// selection in the chosen sort order.
     var visibleAssets: [Asset] {
-        if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+        isSearching ? filteredAssets : sort.sorted(filteredAssets)
+    }
+
+    var visibleGroups: [LibraryGrouping.Group] {
+        (isSearching ? LibraryGrouping.none : grouping).groups(visibleAssets)
+    }
+
+    var binTree: [BinNode] { BinNode.tree(from: bins) }
+
+    var currentBin: Bin? {
+        if case .bin(let id) = filter { return bins.first { $0.id == id } }
+        return nil
+    }
+
+    private var filteredAssets: [Asset] {
+        if isSearching {
             let ranked = searchHits.map(\.assetID)
             let order = Dictionary(ranked.enumerated().map { ($1, $0) }, uniquingKeysWith: min)
             return assets.filter { order[$0.id] != nil }.sorted { order[$0.id]! < order[$1.id]! }
@@ -134,6 +193,8 @@ final class AppModel {
         case .transcribed: return assets.filter { withTranscript.contains($0.id) }
         case .offline: return assets.filter { offline.contains($0.id) }
         case .person: return assets.filter { personAssets.contains($0.id) }
+        case .bin: return assets.filter { binAssets.contains($0.id) }
+        case .volume(let name): return assets.filter { ($0.volumeName ?? "This Mac") == name }
         }
     }
 
@@ -152,6 +213,18 @@ final class AppModel {
             offline = Set(assets.filter { !FileManager.default.fileExists(atPath: $0.sourcePath) }.map(\.id))
             if offline.isEmpty, filter == .offline { filter = .all }
             if case .person(let id) = filter { personAssets = try catalog.assetIDs(forPerson: id) }
+            bins = try catalog.bins()
+            binCounts = try catalog.binCounts()
+            if case .bin(let id) = filter {
+                if bins.contains(where: { $0.id == id }) {
+                    binAssets = try catalog.assetIDs(inBin: id)
+                } else {
+                    filter = .all
+                }
+            }
+            volumes = Dictionary(grouping: assets, by: { $0.volumeName ?? "This Mac" })
+                .map { (name: $0.key, count: $0.value.count) }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             if let library {
                 thumbnailPaths = Dictionary(uniqueKeysWithValues: assets.map {
                     ($0.id, library.thumbnails(forAssetID: $0.id))
@@ -172,6 +245,57 @@ final class AppModel {
 
     private func refreshSearch() {
         searchHits = (try? catalog.search(searchText)) ?? []
+    }
+
+    private func volumesChanged() {
+        _ = try? library?.remapRemountedVolumes()
+        reload()
+    }
+
+    // MARK: Bins
+
+    /// Creates a bin (inside `parent` when given) and returns it so it can be named.
+    @discardableResult
+    func newBin(named name: String = "New Bin", inside parent: Bin? = nil, smartQuery: String? = nil) -> Bin {
+        let bin = Bin(name: name, parentID: parent?.id, smartQuery: smartQuery, sortIndex: bins.count)
+        perform { try catalog.save(bin) }
+        return bin
+    }
+
+    func rename(_ bin: Bin, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        var updated = bin
+        updated.name = trimmed
+        perform { try catalog.save(updated) }
+    }
+
+    func delete(_ bin: Bin) {
+        perform { try catalog.deleteBin(id: bin.id) }
+    }
+
+    func add(_ asset: Asset, to bin: Bin) {
+        perform { try catalog.add(assetIDs: [asset.id], toBin: bin.id) }
+    }
+
+    /// Adds dragged clips (identified by their source files) to a bin.
+    func add(paths: [String], to bin: Bin) {
+        let ids = assets.filter { paths.contains($0.sourcePath) }.map(\.id)
+        guard !ids.isEmpty, !bin.isSmart else { return }
+        perform { try catalog.add(assetIDs: ids, toBin: bin.id) }
+    }
+
+    func remove(_ asset: Asset, from bin: Bin) {
+        perform { try catalog.remove(assetIDs: [asset.id], fromBin: bin.id) }
+    }
+
+    /// Saves the current search as a smart bin that keeps itself up to date.
+    func saveSearchAsSmartBin() {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return }
+        let bin = newBin(named: query, smartQuery: query)
+        searchText = ""
+        select(filter: .bin(bin.id))
     }
 
     // MARK: Import
@@ -320,7 +444,9 @@ final class AppModel {
         panel.message = "Import this file into \(target.displayName)."
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try EditorExport.document(for: clips, target: target, media: media)
+            try EditorExport.document(for: clips, target: target, media: media,
+                                      collectionName: currentBin?.name ?? "StadaXR A.I. MAM",
+                                      pathMappings: editorIsOnAnotherComputer ? pathMappings : [])
                 .write(to: url, atomically: true, encoding: .utf8)
             NSWorkspace.shared.activateFileViewerSelecting([url])
             let skipped = clips.count - sendable.count
@@ -351,7 +477,7 @@ final class AppModel {
             do {
                 if let timeline = urls.first(where: { timelineExtensions.contains($0.pathExtension.lowercased()) }) {
                     let text = try String(contentsOf: timeline, encoding: .utf8)
-                    guard let relink = try library.relinkTimeline(text: text) else {
+                    guard let relink = try library.relinkTimeline(text: text, pathMappings: pathMappings) else {
                         alert = "\(timeline.lastPathComponent) is not a timeline StadaXR A.I. MAM can read."
                         return
                     }

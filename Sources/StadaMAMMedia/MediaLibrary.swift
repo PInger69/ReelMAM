@@ -130,6 +130,31 @@ public struct MediaLibrary: Sendable {
         try catalog.allAssets().filter { !FileManager.default.fileExists(atPath: $0.sourcePath) }
     }
 
+    /// Re-finds originals whose volume is mounted again under a different name — common with
+    /// SMB and other network shares (`/Volumes/Media` one day, `/Volumes/Media-1` the next).
+    /// The same relative path is tried on every mounted volume and confirmed by content.
+    @discardableResult
+    public func remapRemountedVolumes(volumesRoot: String = "/Volumes") throws -> [Asset] {
+        let missing = try offlineAssets()
+        guard !missing.isEmpty else { return [] }
+        let mounted = ((try? FileManager.default.contentsOfDirectory(atPath: volumesRoot)) ?? [])
+            .filter { !$0.hasPrefix(".") }
+        var found: [Asset] = []
+        for asset in missing {
+            let candidates = VolumeRemapper.candidates(for: asset.sourcePath, volumesRoot: volumesRoot,
+                                                       mountedVolumes: mounted)
+            for candidate in candidates where FileManager.default.fileExists(atPath: candidate) {
+                // Without a stored fingerprint, fall back to an exact size match.
+                let size = ((try? FileManager.default.attributesOfItem(atPath: candidate))?[.size] as? NSNumber)?.int64Value
+                let same = asset.fingerprint.map { $0 == SourceFingerprint.compute(path: candidate) } ?? (size == asset.fileSize)
+                guard same else { continue }
+                found.append(try catalog.save(asset.relocated(to: candidate)))
+                break
+            }
+        }
+        return found
+    }
+
     /// Looks under a folder for originals that have moved or been renamed and points their
     /// clips at the new location. Matching is by content, so the name does not matter.
     /// Returns the clips that were found.
@@ -297,12 +322,20 @@ public struct MediaLibrary: Sendable {
     }
 
     /// Reads a Premiere XML, Resolve / Final Cut FCPXML or EDL and maps every clip back to its source.
-    public func relinkTimeline(text: String) throws -> TimelineRelink? {
+    /// - Parameter pathMappings: translates paths written on the editor's computer (Windows
+    ///   drive letters, Linux mount points) back to this Mac before matching.
+    public func relinkTimeline(text: String, pathMappings: [PathMapping] = []) throws -> TimelineRelink? {
         guard let document = TimelineDocument(text: text) else { return nil }
         let resolver = SourceResolver(catalog: catalog)
         var byReference: [TimelineMediaReference: SourceResolution] = [:]
         for reference in document.references {
-            byReference[reference] = try resolver.resolve(reference.clue)
+            var clue = reference.clue
+            if let path = clue.path {
+                clue.path = PathMapping.toMac(path, using: pathMappings)
+                // File names are taken from the last component whichever slash the editor's computer uses.
+                clue.fileName = path.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init)
+            }
+            byReference[reference] = try resolver.resolve(clue)
         }
         return TimelineRelink(
             document: document,

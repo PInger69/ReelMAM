@@ -20,9 +20,9 @@ struct MediaLibraryTests {
     }
 
     /// A 2-second 29.97 DF test clip with timecode, reel name and stereo audio.
-    private func makeSource(_ name: String, timecode: String = "01:00:00;00") throws -> String {
+    private func makeSource(_ name: String, timecode: String = "01:00:00;00") async throws -> String {
         let path = root + "/Volumes/RAID/Day 1/" + name
-        try tools.run(tools.ffmpeg, [
+        try await tools.runOffPool(tools.ffmpeg, [
             "-hide_banner", "-loglevel", "error", "-y",
             "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30000/1001:duration=2",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
@@ -39,7 +39,7 @@ struct MediaLibraryTests {
 
     @Test func ingestReadsTechnicalMetadata() async throws {
         let library = try makeLibrary()
-        let asset = try await library.importFile(at: try makeSource("A001_C003.mov"))
+        let asset = try await library.importFile(at: try await makeSource("A001_C003.mov"))
         #expect(asset.width == 640 && asset.height == 360)
         #expect(asset.frameRate == .fps29_97)
         #expect(asset.durationFrames == 60)
@@ -52,7 +52,7 @@ struct MediaLibraryTests {
     /// The remote preset through FFmpeg: HEVC, AAC, and still matches the source for relinking.
     @Test func remoteProxyThroughFFmpegKeepsIdentity() async throws {
         let library = try makeLibrary()
-        let asset = try await library.importFile(at: try makeSource("R001_C001.mov"))
+        let asset = try await library.importFile(at: try await makeSource("R001_C001.mov"))
         let proxy = try await library.makeProxy(for: asset, preset: .remoteHEVC)
         #expect(proxy.mismatch == nil)
         let probe = try tools.probe(path: proxy.path)
@@ -69,7 +69,7 @@ struct MediaLibraryTests {
     /// The marked copy: made in the background, checked against the source, no server paths inside.
     @Test func watermarkRendererMakesAVerifiedMarkedCopy() async throws {
         let library = try makeLibrary()
-        let asset = try await library.importFile(at: try makeSource("W001_C001.mov"))
+        let asset = try await library.importFile(at: try await makeSource("W001_C001.mov"))
         let proxy = try await library.makeProxy(for: asset, preset: .h264_720)
         let renderer = WatermarkRenderer(tools: tools, cacheRoot: root + "/WM")
 
@@ -92,8 +92,8 @@ struct MediaLibraryTests {
         #expect(bytes.range(of: Data("StradaXR".utf8)) != nil)
         // The mark really is in the picture: the copy differs from the clean proxy's frames.
         let marked = root + "/marked.png", clean = root + "/clean.png"
-        try tools.run(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", path, "-frames:v", "1", marked])
-        try tools.run(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", proxy.path, "-frames:v", "1", clean])
+        try await tools.runOffPool(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", path, "-frames:v", "1", marked])
+        try await tools.runOffPool(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", proxy.path, "-frames:v", "1", clean])
         #expect(try Data(contentsOf: URL(fileURLWithPath: marked)) != Data(contentsOf: URL(fileURLWithPath: clean)))
         // Asked again, it is the same finished file, not another render.
         #expect(renderer.state(for: proxy, asset: asset) == .ready(path: path))
@@ -126,7 +126,7 @@ struct MediaLibraryTests {
 
     @Test func proxyKeepsIdentityAndSourceIsRecalledAfterRenaming() async throws {
         let library = try makeLibrary()
-        let asset = try await library.importFile(at: try makeSource("A001_C003.mov"))
+        let asset = try await library.importFile(at: try await makeSource("A001_C003.mov"))
         let progress = ProgressBox()
         let proxy = try await library.makeProxy(for: asset, preset: .h264_720) { progress.set($0) }
         #expect(proxy.status == .ready)
@@ -158,7 +158,7 @@ struct MediaLibraryTests {
 
     @Test func proResProxyAndThumbnails() async throws {
         let library = try makeLibrary()
-        let asset = try await library.importFile(at: try makeSource("B001_C001.mov", timecode: "00:59:58;00"))
+        let asset = try await library.importFile(at: try await makeSource("B001_C001.mov", timecode: "00:59:58;00"))
         let proxy = try await library.makeProxy(for: asset, preset: .proResProxyHalf)
         let probe = try tools.probe(path: proxy.path)
         #expect(probe.asset(path: proxy.path)?.videoCodec == "prores")
@@ -170,7 +170,7 @@ struct MediaLibraryTests {
 
     @Test func timelineCutOnProxiesRelinksToSources() async throws {
         let library = try makeLibrary()
-        let asset = try await library.importFile(at: try makeSource("A001_C003.mov"))
+        let asset = try await library.importFile(at: try await makeSource("A001_C003.mov"))
         let proxy = try await library.makeProxy(for: asset, preset: .h264_720)
         let xml = """
             <?xml version="1.0"?><xmeml version="4"><sequence><media><video><track><clipitem>
@@ -190,7 +190,7 @@ struct MediaLibraryTests {
     @Test func fallsBackWhenAPipelineFails() async throws {
         var library = try makeLibrary()
         library.pipelines = [.videoToolboxGPU, .software]
-        var asset = try await library.importFile(at: try makeSource("F001_C001.mov"))
+        var asset = try await library.importFile(at: try await makeSource("F001_C001.mov"))
         asset.scan = .interlacedTopFirst  // makes the GPU pipeline inapplicable ...
         let skipped = try await library.makeProxy(for: asset, preset: .h264_720)
         #expect(skipped.pipeline == .software)
@@ -211,7 +211,7 @@ struct MediaLibraryTests {
     /// The primary path on a Mac: Apple's frameworks only, checked independently with ffprobe.
     @Test func nativePipelineProducesInterchangeableProxies() async throws {
         let path = root + "/Volumes/RAID/Day 1/N001_C001.mov"
-        try tools.run(tools.ffmpeg, [
+        try await tools.runOffPool(tools.ffmpeg, [
             "-hide_banner", "-loglevel", "error", "-y",
             "-f", "lavfi", "-i", "testsrc2=size=3840x2160:rate=24000/1001:duration=1",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
@@ -257,7 +257,7 @@ struct MediaLibraryTests {
     /// A marked range becomes a file of its own: same picture and sound, timecode moved on.
     @Test func subclipIsCopiedWithoutReencodingAndKeepsItsTimecode() async throws {
         let path = root + "/Volumes/RAID/Day 1/X001_C001.mov"
-        try tools.run(tools.ffmpeg, [
+        try await tools.runOffPool(tools.ffmpeg, [
             "-hide_banner", "-loglevel", "error", "-y",
             "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=24000/1001:duration=3",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
@@ -300,7 +300,7 @@ struct MediaLibraryTests {
 
     /// Without FFmpeg the app still ingests and proxies what Apple's frameworks can open.
     @Test func worksWithoutFFmpeg() async throws {
-        let source = try makeSource("W001_C001.mov")
+        let source = try await makeSource("W001_C001.mov")
         let library = MediaLibrary(catalog: try Catalog.inMemory(), tools: nil, storageRoot: root + "/NoFFmpeg",
                                    pipelines: RenderPipeline.appleSilicon)
         let asset = try await library.importFile(at: source)
@@ -313,8 +313,8 @@ struct MediaLibraryTests {
 
     @Test func movedAndRenamedOriginalsAreFoundAgain() async throws {
         let library = try makeLibrary()
-        let original = try makeSource("M001_C001.mov")
-        let other = try makeSource("M001_C002.mov", timecode: "02:00:00;00")
+        let original = try await makeSource("M001_C001.mov")
+        let other = try await makeSource("M001_C002.mov", timecode: "02:00:00;00")
         let asset = try await library.importFile(at: original)
         _ = try await library.importFile(at: other)
         try library.catalog.save(Marker(assetID: asset.id, inFrame: 10, name: "Keep me"))
@@ -342,7 +342,7 @@ struct MediaLibraryTests {
 
     @Test func identicalCopiesKeepTheirOwnIdentityWhenOneMoves() async throws {
         let library = try makeLibrary()
-        let first = try makeSource("D001_C001.mov")
+        let first = try await makeSource("D001_C001.mov")
         let second = root + "/Volumes/RAID/Day 1/D001_C001 copy.mov"
         try FileManager.default.copyItem(atPath: first, toPath: second)
         let a = try await library.importFile(at: first)
@@ -361,7 +361,7 @@ struct MediaLibraryTests {
 
     @Test func clipsCataloguedWithoutAFingerprintGetOne() async throws {
         let library = try makeLibrary()
-        var asset = try await library.importFile(at: try makeSource("K001_C001.mov"))
+        var asset = try await library.importFile(at: try await makeSource("K001_C001.mov"))
         asset.fingerprint = nil
         try library.catalog.save(asset)
         var gone = Asset(sourcePath: root + "/Volumes/RAID/not-here.mov")
@@ -375,7 +375,7 @@ struct MediaLibraryTests {
     @Test func shareMountedUnderAnotherNameIsPickedUp() async throws {
         let library = try makeLibrary()
         let volumes = root + "/Volumes"
-        let asset = try await library.importFile(at: try makeSource("S001_C001.mov"))
+        let asset = try await library.importFile(at: try await makeSource("S001_C001.mov"))
         // The share comes back as "RAID-1", as macOS does when the old mount point is taken.
         try FileManager.default.moveItem(atPath: volumes + "/RAID", toPath: volumes + "/RAID-1")
         try FileManager.default.createDirectory(atPath: volumes + "/Other/Day 1", withIntermediateDirectories: true)
@@ -389,7 +389,7 @@ struct MediaLibraryTests {
 
     @Test func timelineFromAWindowsEditorResolves() async throws {
         let library = try makeLibrary()
-        let asset = try await library.importFile(at: try makeSource("T001_C001.mov"))
+        let asset = try await library.importFile(at: try await makeSource("T001_C001.mov"))
         let mappings = [PathMapping(macPrefix: root + "/Volumes/RAID", editorPrefix: "Z:\\Media")]
         let xml = EditorExport.document(for: [EditorClip(asset: asset)], target: .premierePro, media: .sources,
                                         pathMappings: mappings)
@@ -401,7 +401,7 @@ struct MediaLibraryTests {
 
     @Test func reimportingAMovedOriginalKeepsItsIdentity() async throws {
         let library = try makeLibrary()
-        let original = try makeSource("R001_C001.mov")
+        let original = try await makeSource("R001_C001.mov")
         let asset = try await library.importFile(at: original)
         let moved = root + "/Volumes/RAID/Day 1/renamed.mov"
         try FileManager.default.moveItem(atPath: original, toPath: moved)
@@ -469,7 +469,7 @@ struct MediaLibraryTests {
         if let filter { args += ["-vf", filter] }
         args += codec
         if let timecode { args += ["-timecode", timecode] }
-        try tools.run(tools.ffmpeg, args + [path])
+        try await tools.runOffPool(tools.ffmpeg, args + [path])
         let library = try makeLibrary()
         let asset = try await library.importFile(at: path)
         let proxy = try await library.makeProxy(for: asset, preset: .h264_1080)

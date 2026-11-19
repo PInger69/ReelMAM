@@ -24,7 +24,7 @@ struct FacePortraitTests {
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         let clip = root + "/clip.mov"
         // Black frame; a red "face" 80x80 at (400, 60) from the top-left appears only in the second half.
-        try tools.run(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+        try await tools.runOffPool(tools.ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
                                      "-i", "color=c=black:size=640x360:rate=24:duration=2",
                                      "-vf", "drawbox=x=400:y=60:w=80:h=80:color=red:t=fill:enable='gte(t,1)'",
                                      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "1", "-crf", "10", clip])

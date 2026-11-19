@@ -10,11 +10,11 @@ struct IngestWorkerTests {
     let tools = FFmpegTools.locate()!
     let root = NSTemporaryDirectory() + "stadamam-worker-" + UUID().uuidString
 
-    private func makeSource() throws -> String {
+    private func makeSource() async throws -> String {
         let dir = root + "/Volumes/RAID/Day 1"
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let path = dir + "/A001_C003.mov"
-        try tools.run(tools.ffmpeg, [
+        try await tools.runOffPool(tools.ffmpeg, [
             "-hide_banner", "-loglevel", "error", "-y",
             "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=2",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
@@ -29,7 +29,7 @@ struct IngestWorkerTests {
                                    pipelines: [.software])
         let worker = LibraryIngestWorker(library: library, limiter: JobLimiter(limit: 2),
                                          presets: { [.h264_720, .remoteHEVC] })
-        let source = try makeSource()
+        let source = try await makeSource()
         let outcome = try await worker.process(path: source) { _, _ in }
         let assetID = try #require(outcome.assetID)
         let asset = try #require(try library.catalog.asset(id: assetID))

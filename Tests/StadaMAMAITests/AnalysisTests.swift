@@ -84,7 +84,7 @@ import StadaMAMCore
         let path = NSTemporaryDirectory() + "stadamam-ai-\(UUID().uuidString).mov"
         defer { try? FileManager.default.removeItem(atPath: path) }
         // Two visually different halves, so there is a cut to find, with a tone underneath.
-        try tools.run(tools.ffmpeg, [
+        try await tools.runOffPool(tools.ffmpeg, [
             "-hide_banner", "-loglevel", "error", "-y",
             "-f", "lavfi", "-i", "smptehdbars=size=1280x720:rate=24:duration=4",
             "-f", "lavfi", "-i", "mandelbrot=size=1280x720:rate=24:start_scale=0.5",

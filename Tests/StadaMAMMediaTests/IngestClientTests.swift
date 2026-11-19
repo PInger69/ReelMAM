@@ -74,8 +74,8 @@ struct IngestClientRunTests {
         try FileManager.default.createDirectory(atPath: root + "/CARD/PRIVATE/CLIPS", withIntermediateDirectories: true)
     }
 
-    private func makeClip(_ name: String, timecode: String) throws {
-        try tools.run(tools.ffmpeg, [
+    private func makeClip(_ name: String, timecode: String) async throws {
+        try await tools.runOffPool(tools.ffmpeg, [
             "-hide_banner", "-loglevel", "error", "-y",
             "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24:duration=1",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
@@ -85,8 +85,8 @@ struct IngestClientRunTests {
     }
 
     @Test func aCardIsIngestedIntoALibraryAndASecondPassDoesNothing() async throws {
-        try makeClip("A001_C001.mov", timecode: "01:00:00:00")
-        try makeClip("A001_C002.mov", timecode: "01:00:10:00")
+        try await makeClip("A001_C001.mov", timecode: "01:00:00:00")
+        try await makeClip("A001_C002.mov", timecode: "01:00:10:00")
         _ = FileManager.default.createFile(atPath: root + "/CARD/PRIVATE/CLIPS/A001_C003.braw", contents: Data([1, 2, 3]))
         _ = FileManager.default.createFile(atPath: root + "/CARD/PRIVATE/notes.txt", contents: Data("not media".utf8))
 
@@ -123,7 +123,7 @@ struct IngestClientRunTests {
         #expect(try proxyModificationDates(under: root + "/Library/Proxies") == proxyDates)
 
         // A clip that arrives later is picked up by the next pass, alone.
-        try makeClip("A001_C004.mov", timecode: "01:00:20:00")
+        try await makeClip("A001_C004.mov", timecode: "01:00:20:00")
         let third = try await IngestClient.runOnce(options, tools: tools) { lines.add($0) }
         #expect(third.ingested == 1 && third.failures.isEmpty, "\(third)")
         #expect(try Catalog(path: root + "/Library/Catalog.sqlite").allAssets().count == 4)

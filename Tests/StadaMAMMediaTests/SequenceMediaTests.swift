@@ -125,9 +125,9 @@ struct SequencePlaybackAndLookTests {
     init() throws { root = try temporaryFolder() }
 
     /// A clip of one flat colour, 24 fps, with a tone.
-    private func makeClip(_ name: String, color: String, seconds: Int = 2, extra: [String] = []) throws -> Asset {
+    private func makeClip(_ name: String, color: String, seconds: Int = 2, extra: [String] = []) async throws -> Asset {
         let path = root + "/" + name
-        try tools.run(tools.ffmpeg, [
+        try await tools.runOffPool(tools.ffmpeg, [
             "-hide_banner", "-loglevel", "error", "-y",
             "-f", "lavfi", "-i", "color=c=\(color):size=320x180:rate=24:duration=\(seconds)",
             "-f", "lavfi", "-i", "sine=frequency=440:duration=\(seconds)",
@@ -180,7 +180,7 @@ struct SequencePlaybackAndLookTests {
     }
 
     @Test func aLookChangesThePictureOnScreenAndNothingElse() async throws {
-        let clip = try makeClip("grey.mp4", color: "0x406080")
+        let clip = try await makeClip("grey.mp4", color: "0x406080")
         let before = try Data(contentsOf: URL(fileURLWithPath: clip.sourcePath))
         let asset = AVURLAsset(url: URL(fileURLWithPath: clip.sourcePath))
         let plain = try await pixel(of: asset)
@@ -206,7 +206,7 @@ struct SequencePlaybackAndLookTests {
     /// A clip tagged the way log footage is (wide primaries, no standard transfer curve) must
     /// reach the table with its own code values, not after a colour conversion by the system.
     @Test func wideGamutFootageReachesTheTableUnconverted() async throws {
-        let clip = try makeClip("wide.mp4", color: "0xA04020", extra: ["-bsf:v", "h264_metadata=colour_primaries=9:transfer_characteristics=2:matrix_coefficients=1"])
+        let clip = try await makeClip("wide.mp4", color: "0xA04020", extra: ["-bsf:v", "h264_metadata=colour_primaries=9:transfer_characteristics=2:matrix_coefficients=1"])
         let asset = AVURLAsset(url: URL(fileURLWithPath: clip.sourcePath))
         let description = await ViewingLookRenderer.colorDescription(path: clip.sourcePath)
         #expect(description?.contains("2020") == true, "tags read as \(description ?? "nil")")
@@ -217,7 +217,7 @@ struct SequencePlaybackAndLookTests {
         // A mid-grey Apple Log 2 frame through the built-in conversion comes out as the table says
         // for the values that were really in the frame, and lands mid-range.
         let level = Int((midGreyAppleLog * 255).rounded())
-        let grey = try makeClip("loggrey.mp4", color: String(format: "0x%02X%02X%02X", level, level, level))
+        let grey = try await makeClip("loggrey.mp4", color: String(format: "0x%02X%02X%02X", level, level, level))
         let greyAsset = AVURLAsset(url: URL(fileURLWithPath: grey.sourcePath))
         let decoded = try await pixel(of: greyAsset)
         let table = ColorLUT(conversion: .appleLog2)
@@ -229,7 +229,7 @@ struct SequencePlaybackAndLookTests {
     }
 
     @Test func sequencePlaysItsCutsInOrder() async throws {
-        let red = try makeClip("red.mp4", color: "0xC02020"), blue = try makeClip("blue.mp4", color: "0x2020C0")
+        let red = try await makeClip("red.mp4", color: "0xC02020"), blue = try await makeClip("blue.mp4", color: "0x2020C0")
         let raw = Asset(sourcePath: root + "/A001.braw", decodePath: .blackmagicRAW, frameRate: .fps24, durationFrames: 240)
         let sequence = resolved("Cut", [(red, 12, 35), (raw, 0, 23), (blue, 0, 23), (red, 0, 11)])
         let playback = try await SequencePlayback.build(sequence) { $0.decodePath == .blackmagicRAW ? nil : $0.sourcePath }

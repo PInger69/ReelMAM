@@ -111,6 +111,18 @@ public struct FFmpegTools: Sendable {
         return fm.contents(atPath: outputPath) ?? Data()
     }
 
+    /// `run`, for callers on Swift's thread pool: the wait for the tool happens on a thread of its
+    /// own, so the pool is never held up. A pool with every thread waiting on a tool stalls
+    /// everything else that needs it, such as a server answering a request.
+    @discardableResult
+    func runOffPool(_ executable: String, _ arguments: [String]) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result { try self.run(executable, arguments) })
+            }
+        }
+    }
+
     public func probe(path: String) throws -> FFProbeResult {
         try FFProbeResult(json: run(ffprobe, FFProbeResult.arguments + [path]))
     }

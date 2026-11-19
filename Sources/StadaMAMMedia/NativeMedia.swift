@@ -392,6 +392,8 @@ public enum NativeMedia {
     /// Exact to the frame for intra-frame formats such as ProRes. A long-GOP source (H.264,
     /// HEVC) can only be cut on a key frame without re-encoding, so there the copy may begin
     /// a little earlier than asked.
+    ///
+    /// `outputPath` must not exist yet: this never replaces a file.
     public static func exportRange(of asset: Asset, inFrame: Int, outFrame: Int, to outputPath: String,
                                    progress: (@Sendable (Double) -> Void)? = nil) async throws {
         let first = max(inFrame, 0)
@@ -410,7 +412,9 @@ public enum NativeMedia {
         let outputURL = URL(fileURLWithPath: outputPath)
         try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
-        try? FileManager.default.removeItem(at: outputURL)
+        guard !FileManager.default.fileExists(atPath: outputPath) else {
+            throw RenderError.failed("\(outputURL.lastPathComponent) already exists")
+        }
         let reader = try AVAssetReader(asset: source)
         reader.timeRange = range
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
@@ -423,7 +427,12 @@ public enum NativeMedia {
             let hint = try await track.load(.formatDescriptions).first
             let input = AVAssetWriterInput(mediaType: track.mediaType, outputSettings: nil, sourceFormatHint: hint)
             input.expectsMediaDataInRealTime = false
-            if track.mediaType == .video { input.mediaTimeScale = scale }
+            if track.mediaType == .video {
+                input.mediaTimeScale = scale
+                // Orientation and mirroring live on the track, not in the samples: carry them over
+                // so portrait or flipped footage is shown the way the original is.
+                input.transform = try await track.load(.preferredTransform)
+            }
             guard reader.canAdd(output), writer.canAdd(input) else {
                 if track.mediaType == .video { throw RenderError.cannotConfigure("the picture copy") }
                 continue

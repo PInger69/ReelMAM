@@ -285,6 +285,14 @@ struct MediaLibraryTests {
         #expect(imported.id != asset.id)
         #expect(imported.startTimecode.description == "01:00:00:12")
 
+        // Exporting the same range again never replaces the first file.
+        let before = try Data(contentsOf: URL(fileURLWithPath: out))
+        let again = try await library.exportSubclip(of: asset, inFrame: 12, outFrame: 35, intoFolder: root + "/Subclips")
+        #expect(again == root + "/Subclips/X001_C001_01000012-01000111 2.mov")
+        #expect(try Data(contentsOf: URL(fileURLWithPath: out)) == before)
+        #expect(try tools.probe(path: again).asset(path: again)?.durationFrames == 24)
+        #expect(!FileManager.default.fileExists(atPath: again + ".partial.mov"))
+
         // Asking for more than the clip holds stops at its last frame.
         let tail = try await library.exportSubclip(of: asset, inFrame: 60, outFrame: 500, intoFolder: root + "/Subclips")
         #expect(try tools.probe(path: tail).asset(path: tail)?.durationFrames == 12)
@@ -404,6 +412,16 @@ struct MediaLibraryTests {
         let copy = root + "/Volumes/RAID/Day 1/copy.mov"
         try FileManager.default.copyItem(atPath: moved, toPath: copy)
         #expect(try await library.importFile(at: copy).id != asset.id)
+    }
+
+    @Test func takenNamesGetANumber() throws {
+        let folder = root + "/Names"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        #expect(MediaLibrary.unusedPath(folder + "/A.mov") == folder + "/A.mov")
+        _ = FileManager.default.createFile(atPath: folder + "/A.mov", contents: Data())
+        #expect(MediaLibrary.unusedPath(folder + "/A.mov") == folder + "/A 2.mov")
+        _ = FileManager.default.createFile(atPath: folder + "/A 2.mov", contents: Data())
+        #expect(MediaLibrary.unusedPath(folder + "/A.mov") == folder + "/A 3.mov")
     }
 
     @Test func limiterRunsJobsInTurn() async {

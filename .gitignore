@@ -2,12 +2,11 @@
 .build/
 .swiftpm/
 DerivedData/
-*.xcodeproj
 xcuserdata/
+# The Xcode project itself is committed (kept current by CI); personal Xcode state is not.
 *.xcuserstate
 # Blackmagic RAW SDK is licensed separately and must not be committed
 Vendor/BlackmagicRAW/
-App/Info.plist
 
 # Local build output and packaged apps
 build/

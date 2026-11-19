@@ -26,6 +26,8 @@ said and shown in it.
 | Network storage: shares remounted under another name are re-found automatically; path mappings translate this Mac's paths to and from an editor's Windows or Linux computer | Built, tested with simulated volumes |
 | More on-device A.I.: names of people, places and organisations in the speech, sound classification, animals, and how many people are in frame | Built; runs in the macOS tests on synthetic clips, not yet judged on real footage |
 | External A.I. hooks: a service of your choice receives each clip's transcript and tags (never the media) and can return a summary and extra tags | Built; request and reply handling tested, not yet run against a live service |
+| Subclip export: a marked range copied out of the original as its own file, without re-encoding, with its timecode moved on to match | Built; checked on the macOS build with ProRes, not yet tried by hand |
+| Ingest client (`stradaxr-ingest`): headless watch-folder ingest and proxy rendering into a library the app reads, as a single pass or continuously | Built; tested end to end on Linux and in the macOS tests, not yet run on a real ingest station |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
 | Cuts editor: named sequences of cuts, played through from proxies; export as a timeline (FCPXML, Premiere XML, EDL) linked to the camera originals, or as a package with the originals copied and checked; a Rec.709 viewing look for log footage and `.cube` LUTs. See `docs/cuts-editor.md` | Model, exports, package, playback and look built and tested; the editor screen compiles but has not been run by hand; nothing imported into an editing app or tried on camera footage yet |
 | Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |
@@ -72,6 +74,32 @@ sources, ready for online / conform.
 3. For a proxies-only edit, export the timeline from the editing app and open it with
    **Find Source**. Save the copy that points at the originals and import it to finish.
 
+## The ingest client
+
+`stradaxr-ingest` is the ingest engine without a window: a command-line program for a camera
+card reader, a DIT cart or an always-on ingest Mac. It watches folders, takes each clip once it
+has finished copying, catalogues it, renders the proxies, checks every proxy against its source,
+and resumes where it stopped after a restart.
+
+```bash
+stradaxr-ingest /Volumes/CARD_A /Volumes/CARD_B
+```
+
+With no `--library` it writes into the MAM app's own library on the same Mac. To run it on a
+separate machine, point both at one folder on shared storage:
+
+```bash
+stradaxr-ingest --library /Volumes/SAN/StradaXR --preset prores-half --preset remote-hevc /Volumes/CARD_A
+```
+
+`--once` ingests what is there now and exits, for scripts. `stradaxr-ingest --help` lists every
+option. Build it with `swift build -c release --product stradaxr-ingest`, or in Xcode choose
+the `stradaxr-ingest` scheme, which appears beside the app's because both are built from the
+same package. Each build on GitHub also packages it with the app.
+
+The app does not yet take a library folder of its own choosing, and does not refresh by itself
+when the client adds clips while it is open.
+
 ## Player keys
 
 | Key | Action |
@@ -105,24 +133,30 @@ xattr -dr com.apple.quarantine /Applications/StadaMAM.app
 
 ## Building
 
-Requires an Apple Silicon Mac with macOS 14+ and Xcode 16+, and XcodeGen to create the Xcode project:
+Requires an Apple Silicon Mac with macOS 14+ and Xcode 16+.
+
+The Xcode project is in the repository, so there is nothing to generate: open
+`StadaMAM.xcodeproj` and press Run. Two schemes are offered: **StadaMAM** (the app) and
+**stradaxr-ingest** (the ingest client).
+
+To start from nothing in Xcode: on its welcome window choose **Clone Git Repository…**, paste
+`https://github.com/PInger69/ReelMAM.git`, sign in to GitHub when asked, then open
+`StadaMAM.xcodeproj` in the folder it clones.
+
+The project file is generated from `project.yml`, and the build on GitHub regenerates and
+commits it on `main` whenever it changes. After editing `project.yml` yourself, or adding a
+source file to the app, regenerate it locally with XcodeGen:
 
 ```bash
 brew install xcodegen
 ```
 
-FFmpeg is optional. Install it (`brew install ffmpeg`) only if you need formats Apple's
-frameworks cannot open, such as MXF or MKV, and to run the full test suite.
-
-Generate the Xcode project and open it:
-
 ```bash
 xcodegen generate
 ```
 
-```bash
-open StadaMAM.xcodeproj
-```
+FFmpeg is optional. Install it (`brew install ffmpeg`) only if you need formats Apple's
+frameworks cannot open, such as MXF or MKV, and to run the full test suite.
 
 Run the tests (the media tests skip themselves when FFmpeg is not installed):
 

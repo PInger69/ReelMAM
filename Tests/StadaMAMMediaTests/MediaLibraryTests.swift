@@ -254,6 +254,50 @@ struct MediaLibraryTests {
         }
     }
 
+    /// A marked range becomes a file of its own: same picture and sound, timecode moved on.
+    @Test func subclipIsCopiedWithoutReencodingAndKeepsItsTimecode() async throws {
+        let path = root + "/Volumes/RAID/Day 1/X001_C001.mov"
+        try tools.run(tools.ffmpeg, [
+            "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=24000/1001:duration=3",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+            "-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le", "-c:a", "pcm_s24le", "-ac", "2",
+            "-timecode", "01:00:00:00", "-metadata:s:v:0", "reel_name=X001", path,
+        ])
+        let library = try makeLibrary()
+        let asset = try await library.importFile(at: path)
+        #expect(asset.durationFrames == 72)
+        #expect(MediaLibrary.subclipFileName(for: asset, inFrame: 12, outFrame: 35) == "X001_C001_01000012-01000111.mov")
+
+        let out = try await library.exportSubclip(of: asset, inFrame: 12, outFrame: 35, intoFolder: root + "/Subclips")
+        let probe = try tools.probe(path: out)
+        let seen = try #require(probe.asset(path: out))
+        #expect(seen.durationFrames == 24)
+        #expect(seen.frameRate == .fps23_976)
+        #expect(seen.startTimecode.description == "01:00:00:12")
+        #expect(seen.reelName == "X001")
+        #expect(seen.videoCodec == "prores")
+        #expect(seen.width == 1920 && seen.height == 1080)
+        #expect(seen.audioChannels == 2)
+        // A subclip is new media in its own right, not a proxy of its source.
+        #expect(probe.embeddedAssetID == nil)
+        let imported = try await library.importFile(at: out)
+        #expect(imported.id != asset.id)
+        #expect(imported.startTimecode.description == "01:00:00:12")
+
+        // Exporting the same range again never replaces the first file.
+        let before = try Data(contentsOf: URL(fileURLWithPath: out))
+        let again = try await library.exportSubclip(of: asset, inFrame: 12, outFrame: 35, intoFolder: root + "/Subclips")
+        #expect(again == root + "/Subclips/X001_C001_01000012-01000111 2.mov")
+        #expect(try Data(contentsOf: URL(fileURLWithPath: out)) == before)
+        #expect(try tools.probe(path: again).asset(path: again)?.durationFrames == 24)
+        #expect(!FileManager.default.fileExists(atPath: again + ".partial.mov"))
+
+        // Asking for more than the clip holds stops at its last frame.
+        let tail = try await library.exportSubclip(of: asset, inFrame: 60, outFrame: 500, intoFolder: root + "/Subclips")
+        #expect(try tools.probe(path: tail).asset(path: tail)?.durationFrames == 12)
+    }
+
     /// Without FFmpeg the app still ingests and proxies what Apple's frameworks can open.
     @Test func worksWithoutFFmpeg() async throws {
         let source = try makeSource("W001_C001.mov")
@@ -368,6 +412,16 @@ struct MediaLibraryTests {
         let copy = root + "/Volumes/RAID/Day 1/copy.mov"
         try FileManager.default.copyItem(atPath: moved, toPath: copy)
         #expect(try await library.importFile(at: copy).id != asset.id)
+    }
+
+    @Test func takenNamesGetANumber() throws {
+        let folder = root + "/Names"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        #expect(MediaLibrary.unusedPath(folder + "/A.mov") == folder + "/A.mov")
+        _ = FileManager.default.createFile(atPath: folder + "/A.mov", contents: Data())
+        #expect(MediaLibrary.unusedPath(folder + "/A.mov") == folder + "/A 2.mov")
+        _ = FileManager.default.createFile(atPath: folder + "/A 2.mov", contents: Data())
+        #expect(MediaLibrary.unusedPath(folder + "/A.mov") == folder + "/A 3.mov")
     }
 
     @Test func limiterRunsJobsInTurn() async {

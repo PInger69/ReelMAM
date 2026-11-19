@@ -281,6 +281,55 @@ public struct MediaLibrary: Sendable {
         try await Self.offload { try tools.render(plan, progress: progress) }
     }
 
+    // MARK: Subclips
+
+    /// The file name a subclip of a clip is given: the clip's name, then the range's timecodes.
+    public static func subclipFileName(for asset: Asset, inFrame: Int, outFrame: Int) -> String {
+        func compact(_ frame: Int) -> String {
+            asset.timecode(atFrame: frame).description
+                .replacingOccurrences(of: ":", with: "").replacingOccurrences(of: ";", with: "")
+        }
+        let base = (asset.fileName as NSString).deletingPathExtension
+        return "\(base)_\(compact(inFrame))-\(compact(outFrame)).mov"
+    }
+
+    /// `path` if nothing is there, otherwise the same name with " 2", " 3" … before the extension.
+    public static func unusedPath(_ path: String) -> String {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: path) else { return path }
+        let ext = (path as NSString).pathExtension
+        let stem = (path as NSString).deletingPathExtension
+        var number = 2
+        while fm.fileExists(atPath: "\(stem) \(number).\(ext)") { number += 1 }
+        return "\(stem) \(number).\(ext)"
+    }
+
+    /// Copies a marked range of a camera original into a file of its own, without re-encoding.
+    /// Returns the path written.
+    @discardableResult
+    public func exportSubclip(of asset: Asset, inFrame: Int, outFrame: Int, intoFolder folder: String,
+                              progress: (@Sendable (Double) -> Void)? = nil) async throws -> String {
+        guard asset.decodePath == .avFoundation else { throw MediaError.decoderUnavailable(asset.formatName) }
+        // Never replace a file that is already there: two cameras can share a clip name and
+        // timecode, and an earlier export may be in use. A taken name gets a number instead.
+        let path = Self.unusedPath(folder + "/" + Self.subclipFileName(for: asset, inFrame: inFrame, outFrame: outFrame))
+        #if os(macOS)
+        // Written under a temporary name, so a failed export leaves nothing that looks finished.
+        let partial = path + ".partial.mov"
+        try? FileManager.default.removeItem(atPath: partial)
+        do {
+            try await NativeMedia.exportRange(of: asset, inFrame: inFrame, outFrame: outFrame, to: partial, progress: progress)
+            try FileManager.default.moveItem(atPath: partial, toPath: path)
+        } catch {
+            try? FileManager.default.removeItem(atPath: partial)
+            throw error
+        }
+        return path
+        #else
+        throw MediaError.ffmpegFailed("subclip export needs macOS")
+        #endif
+    }
+
     /// The best file to play or analyse: a ready proxy if there is one, else the source.
     public func playablePath(for asset: Asset) -> String? {
         let fm = FileManager.default

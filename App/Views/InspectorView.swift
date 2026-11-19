@@ -254,6 +254,13 @@ private struct MarkerRow: View {
                     updated.name = name
                     model.update(updated)
                 }
+            if marker.isSubclip, asset.decodePath == .avFoundation {
+                Button { model.exportSubclip(of: asset, marker: marker) } label: {
+                    Image(systemName: "square.and.arrow.up.on.square")
+                }
+                .buttonStyle(.borderless)
+                .help("Export this subclip as its own file, without re-encoding")
+            }
             Button(role: .destructive) { model.delete(marker) } label: { Image(systemName: "trash") }
                 .buttonStyle(.borderless)
         }

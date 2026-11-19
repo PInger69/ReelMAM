@@ -37,6 +37,10 @@ struct ContentView: View {
                     Label("Make Proxies", systemImage: "bolt.fill")
                 }
                 .help("Render a proxy for every clip that does not have one")
+                Button { model.analyzeVisible() } label: {
+                    Label("Analyse", systemImage: "sparkles")
+                }
+                .help("Run every A.I. pass on the clips shown")
                 Menu {
                     SendToEditorMenu()
                 } label: {

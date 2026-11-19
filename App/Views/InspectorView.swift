@@ -320,13 +320,22 @@ private struct ScenesPane: View {
     var body: some View {
         if tags.isEmpty {
             EmptyPane(title: "Not analysed", symbol: "sparkles",
-                      message: "Analyse the clip to detect shots, recognise scenes and objects, and read on-screen text.",
+                      message: "Analyse the clip to detect shots, recognise scenes, objects, animals and people in frame, read on-screen text, classify sounds and pick out names in the speech.",
                       actionTitle: "Analyse with A.I.") { model.analyze(asset) }
         } else {
             VStack(alignment: .leading, spacing: 14) {
+                if let summary = tags.first(where: { $0.kind == .summary }) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Summary").font(.headline)
+                        Text(summary.label).textSelection(.enabled)
+                    }
+                }
                 section("Shots", tags.filter { $0.kind == .shot }, tint: .gray)
                 section("Scenes and objects", tags.filter { $0.kind == .label }, tint: .purple)
                 section("On-screen text", tags.filter { $0.kind == .text }, tint: .teal)
+                section("Named in speech", tags.filter { $0.kind == .entity }, tint: .orange)
+                section("Sounds", tags.filter { $0.kind == .sound }, tint: .green)
+                section("External A.I.", tags.filter { $0.kind == .external }, tint: .pink)
             }
         }
     }

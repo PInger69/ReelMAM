@@ -24,6 +24,8 @@ said and shown in it.
 | Proxies made automatically on import; clips can be dragged from the library into an editing app | Built; not yet tried by hand |
 | Bins: nested bins, smart bins saved from a search, drag clips in; sort and group by volume, folder, reel, day or format; a Locations list of drives and shares | Built; logic tested, interface verified only by the CI screenshot |
 | Network storage: shares remounted under another name are re-found automatically; path mappings translate this Mac's paths to and from an editor's Windows or Linux computer | Built, tested with simulated volumes |
+| More on-device A.I.: names of people, places and organisations in the speech, sound classification, animals, and how many people are in frame | Built; runs in the macOS tests on synthetic clips, not yet judged on real footage |
+| External A.I. hooks: a service of your choice receives each clip's transcript and tags (never the media) and can return a summary and extra tags | Built; request and reply handling tested, not yet run against a live service |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
 | Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |
 | macOS app: library grid with hover scrub, player with JKL shuttle, frame stepping, mark in / out, markers and subclips, inspector | Written; verified only by the macOS CI build, not yet run by hand |

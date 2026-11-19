@@ -80,11 +80,47 @@ struct SettingsView: View {
                     model.pathMappings.append(PathMapping(macPrefix: "", editorPrefix: ""))
                 }
             }
+            Section("External A.I.") {
+                Text("After the on-device analysis, each enabled service is sent the clip's name, technical details, transcript and tags as JSON — never the media — and may reply with a summary and extra tags.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                ForEach($model.analysisHooks) { $hook in
+                    HStack {
+                        Toggle("Enabled", isOn: $hook.isEnabled)
+                        TextField("Name", text: $hook.name, prompt: Text("Name"))
+                            .frame(width: 110)
+                        TextField("Address", text: $hook.url, prompt: Text("https://…"))
+                        HookTokenField(hookID: hook.id)
+                            .frame(width: 110)
+                        Button {
+                            Keychain.setToken("", for: hook.id)
+                            model.analysisHooks.removeAll { $0.id == hook.id }
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .labelsHidden()
+                }
+                Button("Add External A.I. Service") { model.analysisHooks.append(AnalysisHook()) }
+            }
             Text("Every proxy keeps its source's name, timecode, duration, frame rate and audio layout, so Premiere Pro, DaVinci Resolve and Final Cut Pro can attach it to the original.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
         .padding(20)
         .frame(width: 620)
+    }
+}
+
+/// Edits a hook's access token, which is kept in the keychain rather than in preferences.
+struct HookTokenField: View {
+    let hookID: String
+    @State private var token = ""
+
+    var body: some View {
+        SecureField("Token", text: $token, prompt: Text("Token"))
+            .onAppear { token = Keychain.token(for: hookID) ?? "" }
+            .onChange(of: token) { _, value in Keychain.setToken(value, for: hookID) }
     }
 }

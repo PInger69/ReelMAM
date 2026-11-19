@@ -38,5 +38,6 @@ let package = Package(
         ),
         .testTarget(name: "StadaMAMCoreTests", dependencies: ["StadaMAMCore"]),
         .testTarget(name: "StadaMAMMediaTests", dependencies: ["StadaMAMMedia"]),
+        .testTarget(name: "StadaMAMAITests", dependencies: ["StadaMAMAI", "StadaMAMMedia"]),
     ]
 )

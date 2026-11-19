@@ -46,7 +46,23 @@ public enum VisionAnalyzer {
             readText.recognitionLevel = .fast
             let detectFaces = VNDetectFaceRectanglesRequest()
             let featurePrint = VNGenerateImageFeaturePrintRequest()
-            try VNImageRequestHandler(cgImage: image).perform([classify, readText, detectFaces, featurePrint])
+            let animals = VNRecognizeAnimalsRequest()
+            let humans = VNDetectHumanRectanglesRequest()
+            try VNImageRequestHandler(cgImage: image)
+                .perform([classify, readText, detectFaces, featurePrint, animals, humans])
+
+            for animal in animals.results ?? [] {
+                guard let best = animal.labels.first, best.confidence >= 0.5 else { continue }
+                labels.append(FrameLabel(label: best.identifier.lowercased(), confidence: Double(best.confidence),
+                                         timeSeconds: time))
+            }
+            // How many people are in frame, in the terms a logger would use.
+            let headcount = (humans.results ?? []).filter { $0.confidence >= 0.5 }.count
+            if headcount > 0 {
+                let label = headcount == 1 ? "one person" : headcount == 2 ? "two people"
+                    : headcount <= 5 ? "small group" : "crowd"
+                labels.append(FrameLabel(label: label, confidence: 1, timeSeconds: time))
+            }
 
             for observation in (classify.results ?? []).filter({ $0.confidence >= 0.35 }).prefix(6) {
                 labels.append(FrameLabel(label: observation.identifier.replacingOccurrences(of: "_", with: " "),

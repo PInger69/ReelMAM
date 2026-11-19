@@ -35,7 +35,7 @@ public enum Transcriber {
         guard let recognizer = SFSpeechRecognizer(locale: locale) ?? SFSpeechRecognizer(),
               recognizer.isAvailable else { throw AnalysisError.speechUnavailable }
 
-        let audioURL = try await extractAudio(from: mediaURL)
+        let audioURL = try await AudioExtractor.extract(from: mediaURL)
         defer { try? FileManager.default.removeItem(at: audioURL) }
 
         let request = SFSpeechURLRecognitionRequest(url: audioURL)
@@ -60,8 +60,11 @@ public enum Transcriber {
         }
         return CaptionBuilder.segments(assetID: assetID, words: words)
     }
+}
 
-    private static func extractAudio(from url: URL) async throws -> URL {
+/// Pulls a clip's audio out into a temporary file the speech and sound analysers can read.
+enum AudioExtractor {
+    static func extract(from url: URL) async throws -> URL {
         let asset = AVURLAsset(url: url)
         guard try await !asset.loadTracks(withMediaType: .audio).isEmpty else { throw AnalysisError.noAudio }
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {

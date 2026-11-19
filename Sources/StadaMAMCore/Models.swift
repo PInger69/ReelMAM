@@ -212,6 +212,14 @@ public enum TagKind: String, Codable, Sendable {
     case label
     /// On-screen text found by OCR.
     case text
+    /// A person, place or organisation named in the speech.
+    case entity
+    /// A kind of sound heard in the clip ("music", "applause", "speech").
+    case sound
+    /// A tag added by an external A.I. hook.
+    case external
+    /// A written description of the clip (from an external hook).
+    case summary
 }
 
 /// A time-ranged piece of machine-generated description.

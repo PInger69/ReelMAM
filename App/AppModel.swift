@@ -91,6 +91,10 @@ final class AppModel {
     var pathMappings: [PathMapping] {
         didSet { UserDefaults.standard.set(try? JSONEncoder().encode(pathMappings), forKey: "pathMappings") }
     }
+    /// External A.I. services that receive each clip's transcript and tags after analysis.
+    var analysisHooks: [AnalysisHook] {
+        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(analysisHooks), forKey: "analysisHooks") }
+    }
     /// Write editor files with the other computer's paths (see `pathMappings`).
     var editorIsOnAnotherComputer: Bool {
         didSet { UserDefaults.standard.set(editorIsOnAnotherComputer, forKey: "editorIsOnAnotherComputer") }
@@ -119,6 +123,8 @@ final class AppModel {
         pathMappings = defaults.data(forKey: "pathMappings")
             .flatMap { try? JSONDecoder().decode([PathMapping].self, from: $0) } ?? []
         editorIsOnAnotherComputer = defaults.bool(forKey: "editorIsOnAnotherComputer")
+        analysisHooks = defaults.data(forKey: "analysisHooks")
+            .flatMap { try? JSONDecoder().decode([AnalysisHook].self, from: $0) } ?? []
         makesProxiesOnImport = UserDefaults.standard.object(forKey: "makesProxiesOnImport") as? Bool ?? true
         defaultPreset = UserDefaults.standard.string(forKey: "defaultPreset").flatMap(ProxyPreset.init(rawValue:))
             ?? .proResProxyHalf
@@ -232,6 +238,16 @@ final class AppModel {
             }
             refreshSearch()
             if opensFirstClip, selectedID == nil { selectedID = assets.last?.id }
+            // Demonstration launch: show what bins look like once there is something to put in them.
+            if opensFirstClip, bins.isEmpty, assets.count >= 4 {
+                let selects = Bin(name: "Selects"), day = Bin(name: "Day 1", parentID: selects.id)
+                try catalog.save(selects)
+                try catalog.save(day)
+                try catalog.add(assetIDs: Array(assets.prefix(2).map(\.id)), toBin: day.id)
+                try catalog.save(Bin(name: "UHD 4K", smartQuery: "UHD 4K", sortIndex: 1))
+                bins = try catalog.bins()
+                binCounts = try catalog.binCounts()
+            }
             revision += 1
         } catch {
             alert = error.localizedDescription
@@ -575,15 +591,19 @@ final class AppModel {
 
     // MARK: AI
 
-    /// Runs the picture pass (shots, labels, on-screen text, faces) and then speech-to-text.
+    /// Runs every analysis pass on a clip: picture (shots, scenes, objects, animals, people
+    /// in frame, on-screen text, faces), sound, speech-to-text, names in the speech, and then
+    /// any external A.I. hooks. Each pass is independent, so one failing does not lose the rest.
     func analyze(_ asset: Asset) {
         guard let path = library?.playablePath(for: asset) else {
             alert = "\(asset.fileName) has no playable media yet. Generate a proxy first."
             return
         }
+        guard activity[asset.id] == nil else { return }
         let url = URL(fileURLWithPath: path)
         activity[asset.id] = Activity(title: "Analysing picture", progress: 0)
         Task {
+            var problems: [String] = []
             do {
                 let visual = try await VisionAnalyzer.analyze(mediaURL: url, asset: asset) { fraction in
                     Task { @MainActor in
@@ -594,20 +614,59 @@ final class AppModel {
                 try catalog.replaceFaces(assetID: asset.id, with: visual.faces)
                 try groupFaces()
                 reload()
+            } catch {
+                problems.append("Picture: \(error.localizedDescription)")
+            }
+
+            if asset.audioChannels > 0 {
+                activity[asset.id] = Activity(title: "Listening for sounds")
+                do {
+                    let sounds = try await SoundAnalyzer.classify(mediaURL: url, assetID: asset.id)
+                    try catalog.replaceTags(assetID: asset.id, kinds: [.sound], with: sounds)
+                } catch {
+                    problems.append("Sound: \(error.localizedDescription)")
+                }
 
                 activity[asset.id] = Activity(title: "Transcribing speech")
                 do {
                     let segments = try await Transcriber.transcribe(mediaURL: url, assetID: asset.id)
                     try catalog.replaceTranscript(assetID: asset.id, with: segments)
+                    try catalog.replaceTags(assetID: asset.id, kinds: [.entity],
+                                            with: TextAnalyzer.entities(in: segments, assetID: asset.id))
                 } catch AnalysisError.noAudio {
                     // Silent clips simply have no transcript.
+                } catch {
+                    problems.append("Speech: \(error.localizedDescription)")
                 }
-            } catch {
-                alert = "\(asset.fileName): \(error.localizedDescription)"
+                reload()
             }
+
+            for hook in analysisHooks where hook.isEnabled && !hook.url.isEmpty {
+                activity[asset.id] = Activity(title: "Asking \(hook.name.isEmpty ? "external A.I." : hook.name)")
+                do {
+                    let body = ExternalAnalysisRequest(
+                        asset: asset, transcript: try catalog.transcript(forAsset: asset.id),
+                        tags: try catalog.tags(forAsset: asset.id))
+                    let reply = try await ExternalAnalysisClient.send(hook: hook, token: Keychain.token(for: hook.id),
+                                                                     body: body)
+                    try catalog.replaceTags(assetID: asset.id, kinds: [.external, .summary],
+                                            with: reply.sceneTags(for: asset))
+                } catch {
+                    problems.append("\(hook.name.isEmpty ? "External A.I." : hook.name): \(error.localizedDescription)")
+                }
+            }
+
             activity[asset.id] = nil
             reload()
+            if !problems.isEmpty {
+                alert = "\(asset.fileName) was analysed with some parts missing:\n" + problems.joined(separator: "\n")
+            }
         }
+    }
+
+    /// Analyses every clip on screen that has playable media.
+    func analyzeVisible() {
+        for asset in visibleAssets where library?.playablePath(for: asset) != nil { analyze(asset) }
     }
 
     /// Groups every unassigned face in the catalog into people, joining existing people where they match.

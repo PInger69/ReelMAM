@@ -31,7 +31,9 @@ public struct MediaLibrary: Sendable {
     public static func mediaFiles(at path: String) -> [String] {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { return [] }
-        func isMedia(_ p: String) -> Bool { DecodePath.forFile(extension: (p as NSString).pathExtension) != nil }
+        func isMedia(_ p: String) -> Bool {
+            FormatIdentity.importableExtensions.contains((p as NSString).pathExtension.lowercased())
+        }
         guard isDirectory.boolValue else { return isMedia(path) ? [path] : [] }
         guard let enumerator = FileManager.default.enumerator(atPath: path) else { return [] }
         var files: [String] = []
@@ -44,20 +46,25 @@ public struct MediaLibrary: Sendable {
     }
 
     /// Probes a file and adds it to the catalog. Re-importing a known path updates it in place.
+    ///
+    /// Nothing is rejected for its size, frame rate or codec. A file whose essence cannot be
+    /// decoded (camera RAW such as Blackmagic RAW, Sony X-OCN, ARRIRAW, REDCODE) is still
+    /// identified and catalogued with whatever the container reveals.
     @discardableResult
     public func importFile(at path: String) throws -> Asset {
         let ext = (path as NSString).pathExtension
         let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.int64Value ?? 0
-        if DecodePath.forFile(extension: ext) == .blackmagicRAW {
-            // FFmpeg cannot read BRAW. Catalogue the file so it is searchable and relinkable;
-            // technical metadata and proxies arrive with the Blackmagic RAW SDK bridge.
-            return try catalog.save(Asset(sourcePath: path, fileSize: size, decodePath: .blackmagicRAW, container: "braw"))
+        let probe = try? tools.probe(path: path)
+        if let id = probe?.embeddedAssetID { throw MediaError.isOwnProxy(assetID: id) }
+        if var asset = probe?.asset(path: path) {
+            if asset.fileSize == 0 { asset.fileSize = size }
+            return try catalog.save(asset)
         }
-        let probe = try tools.probe(path: path)
-        if let id = probe.embeddedAssetID { throw MediaError.isOwnProxy(assetID: id) }
-        guard var asset = probe.asset(path: path) else { throw MediaError.noVideoStream(path) }
-        if asset.fileSize == 0 { asset.fileSize = size }
-        return try catalog.save(asset)
+        // The container could not be read at all, or exposes no picture stream.
+        let identity = FormatIdentity.identify(fileExtension: ext, canDecode: false, vendor: probe?.vendorHint)
+        guard FormatIdentity.importableExtensions.contains(ext.lowercased()) else { throw MediaError.noVideoStream(path) }
+        return try catalog.save(Asset(sourcePath: path, fileSize: size, decodePath: identity.decodePath,
+                                      container: ext.lowercased(), formatName: identity.name, scan: .unknown))
     }
 
     // MARK: Proxies
@@ -66,7 +73,7 @@ public struct MediaLibrary: Sendable {
     @discardableResult
     public func makeProxy(for asset: Asset, preset: ProxyPreset,
                           progress: (@Sendable (Double) -> Void)? = nil) throws -> ProxyRecord {
-        guard asset.decodePath != .blackmagicRAW else { throw MediaError.blackmagicRAWSDKRequired }
+        guard asset.decodePath.canRender else { throw MediaError.decoderUnavailable(asset.formatName) }
         let path = naming.proxyPath(for: asset, root: proxyRoot)
         var record = try catalog.proxies(forAsset: asset.id).first { $0.path == path }
             ?? ProxyRecord(assetID: asset.id, path: path, preset: preset)
@@ -98,8 +105,8 @@ public struct MediaLibrary: Sendable {
     @discardableResult
     public func makeThumbnails(for asset: Asset, count: Int = 12) throws -> [String] {
         let media = playablePath(for: asset) ?? asset.sourcePath
-        guard asset.decodePath != .blackmagicRAW || media != asset.sourcePath else {
-            throw MediaError.blackmagicRAWSDKRequired
+        guard asset.decodePath.canRender || media != asset.sourcePath else {
+            throw MediaError.decoderUnavailable(asset.formatName)
         }
         return try tools.writeThumbnails(mediaPath: media, durationSeconds: asset.durationSeconds, count: count,
                                          to: thumbnailDirectory(forAssetID: asset.id))

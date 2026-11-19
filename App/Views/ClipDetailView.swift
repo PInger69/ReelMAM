@@ -71,9 +71,9 @@ struct ClipDetailView: View {
                 ContentUnavailableView {
                     Label("No playable media", systemImage: "play.slash")
                 } description: {
-                    Text(asset.decodePath == .blackmagicRAW
-                         ? "Blackmagic RAW playback needs the Blackmagic RAW SDK, which is not installed yet."
-                         : "This format needs a proxy to play. Generate one from the Clip menu.")
+                    Text(asset.decodePath.canRender
+                         ? "This format needs a proxy to play. Generate one from the Clip menu."
+                         : "\(asset.formatName) is catalogued and searchable, but playing it needs the camera maker's SDK, which is not installed yet.")
                 }
             }
         }

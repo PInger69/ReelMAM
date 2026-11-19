@@ -89,7 +89,9 @@ public struct ProxyRenderPlan: Sendable {
         let height = preset.height(forSourceHeight: asset.height)
         var args = ["-hide_banner", "-nostdin", "-y", "-i", asset.sourcePath,
                     "-map", "0:v:0", "-map", "0:a?", "-map_metadata", "0",
-                    "-vf", "scale=-2:\(height)"]
+                    // Interlaced sources are deinterlaced one frame per frame, so the proxy keeps the
+                    // source's frame count and timecode.
+                    "-vf", (asset.scan.isInterlaced ? "bwdif=mode=send_frame," : "") + "scale=-2:\(height)"]
         if preset.isProRes {
             args += hardware
                 ? ["-c:v", "prores_videotoolbox", "-profile:v", "proxy"]

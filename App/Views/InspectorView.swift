@@ -86,10 +86,12 @@ private struct InfoPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
-                row("Format", [asset.videoCodec?.uppercased(), asset.container?.uppercased()]
-                    .compactMap { $0 }.joined(separator: " in "))
-                row("Picture", asset.width > 0 ? "\(asset.width) × \(asset.height)" : "—")
-                row("Frame rate", asset.durationFrames > 0 ? String(format: "%.3f fps", asset.frameRate.fps) : "—")
+                row("Format", [asset.formatName.isEmpty ? asset.videoCodec?.uppercased() : asset.formatName,
+                               asset.container?.uppercased()].compactMap { $0 }.joined(separator: " in "))
+                row("Picture", picture)
+                row("Standard", standard)
+                row("Frame rate", asset.height > 0 ? String(format: "%.3f fps", asset.frameRate.fps) : "—")
+                row("Decoding", decoding)
                 row("Start timecode", asset.startTimecode.description)
                 row("Duration", Timecode(frames: asset.durationFrames, rate: asset.frameRate).description)
                 row("Reel", asset.reelName ?? "—")
@@ -137,6 +139,30 @@ private struct InfoPane: View {
             }
         }
         .onAppear { notes = asset.notes }
+    }
+
+    private var picture: String {
+        guard asset.width > 0 else { return "Not readable without the camera maker's decoder" }
+        var text = "\(asset.width) × \(asset.height)  ·  \(asset.resolutionClass)"
+        if asset.pixelAspectNum != asset.pixelAspectDen {
+            text += "  ·  pixel aspect \(asset.pixelAspectNum):\(asset.pixelAspectDen) (displays \(asset.displayWidth) wide)"
+        }
+        return text
+    }
+
+    private var standard: String {
+        guard asset.height > 0 else { return "—" }
+        let standards = asset.broadcastStandards.map(\.rawValue)
+        return asset.pictureFormatName + (standards.isEmpty ? "" : "  ·  " + standards.joined(separator: ", "))
+    }
+
+    private var decoding: String {
+        switch asset.decodePath {
+        case .avFoundation: return "Native"
+        case .ffmpeg: return "FFmpeg (plays through its proxy)"
+        case .blackmagicRAW: return "Needs the Blackmagic RAW SDK"
+        case .unsupported: return "Needs the camera maker's SDK"
+        }
     }
 
     private func saveNotes() {

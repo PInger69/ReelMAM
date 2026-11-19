@@ -105,13 +105,102 @@ struct MediaLibraryTests {
         #expect(!relink.relinkedText.contains("/Library/Proxies/"))
     }
 
-    @Test func brawIsCataloguedButNeedsSDK() throws {
+    @Test func cameraRAWIsIdentifiedAndCataloguedWithoutADecoder() throws {
         let library = try makeLibrary()
-        let path = root + "/Volumes/RAID/Day 1/C001.braw"
-        _ = FileManager.default.createFile(atPath: path, contents: Data([0, 1, 2]))
+        for (name, expected, path) in [("C001.braw", "Blackmagic RAW", DecodePath.blackmagicRAW),
+                                       ("A001C002_240101XY.mxf", "Camera RAW (MXF)", .unsupported),
+                                       ("A001_C001.R3D", "REDCODE RAW", .unsupported),
+                                       ("B001.ari", "ARRIRAW", .unsupported)] {
+            let file = root + "/Volumes/RAID/Day 1/" + name
+            _ = FileManager.default.createFile(atPath: file, contents: Data([0, 1, 2]))
+            let asset = try library.importFile(at: file)
+            #expect(asset.formatName == expected)
+            #expect(asset.decodePath == path)
+            #expect(throws: MediaError.decoderUnavailable(expected)) {
+                try library.makeProxy(for: asset, preset: .h264_720)
+            }
+        }
+        #expect(try library.catalog.search("redcode").count == 1)
+        #expect(MediaLibrary.mediaFiles(at: root + "/Volumes").count == 4)
+    }
+
+    /// Renders a short clip in a given raster / rate / codec and checks it survives ingest and proxying.
+    private func roundTrip(_ name: String, size: String, rate: String, codec: [String], seconds: String = "0.5",
+                           filter: String? = nil, timecode: String? = "01:00:00:00") throws -> (Asset, Asset) {
+        let path = root + "/Volumes/RAID/Day 1/" + name
+        var args = ["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+                    "-i", "testsrc2=size=\(size):rate=\(rate):duration=\(seconds)"]
+        if let filter { args += ["-vf", filter] }
+        args += codec
+        if let timecode { args += ["-timecode", timecode] }
+        try tools.run(tools.ffmpeg, args + [path])
+        let library = try makeLibrary()
         let asset = try library.importFile(at: path)
-        #expect(asset.decodePath == .blackmagicRAW)
-        #expect(throws: MediaError.blackmagicRAWSDKRequired) { try library.makeProxy(for: asset, preset: .h264_720) }
+        let proxy = try library.makeProxy(for: asset, preset: .h264_1080)
+        let proxyAsset = try #require(try tools.probe(path: proxy.path).asset(path: proxy.path))
+        #expect(proxyAsset.frameRate == asset.frameRate)
+        #expect(proxyAsset.durationFrames == asset.durationFrames)
+        #expect(proxyAsset.startTimecode.description == asset.startTimecode.description)
+        #expect(proxyAsset.scan == .progressive)
+        return (asset, proxyAsset)
+    }
+
+    private let proRes = ["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]
+
+    @Test func uhd24pAndUHD23976p() throws {
+        let (film, filmProxy) = try roundTrip("UHD_2398.mov", size: "3840x2160", rate: "24000/1001", codec: proRes)
+        #expect(film.pictureFormatName == "2160p23.976")
+        #expect(film.resolutionClass == "UHD 4K")
+        #expect(film.formatName == "Apple ProRes 422 HQ")
+        #expect(film.durationFrames == 12)
+        #expect(film.broadcastStandards == [.atsc3])
+        #expect(filmProxy.height == 1080 && filmProxy.width == 1920)
+
+        let (true24, _) = try roundTrip("UHD_24.mov", size: "3840x2160", rate: "24", codec: proRes)
+        #expect(true24.pictureFormatName == "2160p24")
+        #expect(true24.frameRate == .fps24)
+
+        let (dci, _) = try roundTrip("DCI_24.mov", size: "4096x2160", rate: "24", codec: proRes)
+        #expect(dci.resolutionClass == "DCI 4K")
+        #expect(dci.broadcastStandards.isEmpty)
+    }
+
+    @Test func eightKAndLargerAreNotRestricted() throws {
+        let fast = ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"]
+        let (uhd8k, proxy) = try roundTrip("8K.mov", size: "7680x4320", rate: "24000/1001", codec: fast, seconds: "0.25")
+        #expect(uhd8k.width == 7680 && uhd8k.height == 4320)
+        #expect(uhd8k.resolutionClass == "UHD 8K")
+        #expect(uhd8k.pictureFormatName == "4320p23.976")
+        #expect(proxy.height == 1080)
+
+        // Sony VENICE 2 full-frame 3:2 raster.
+        let (venice, _) = try roundTrip("8K6.mov", size: "8640x5760", rate: "24", codec: fast, seconds: "0.25")
+        #expect(venice.resolutionClass == "8.6K")
+        #expect(venice.pictureFormatName == "5760p24")
+    }
+
+    @Test func atscInterlacedAndAnamorphicFormats() throws {
+        let mpeg2i = ["-c:v", "mpeg2video", "-flags", "+ildct+ilme", "-b:v", "12M"]
+        let (hd, _) = try roundTrip("1080i.ts", size: "1920x1080", rate: "60000/1001", codec: mpeg2i + ["-top", "1"],
+                                    filter: "tinterlace=interleave_top", timecode: nil)
+        #expect(hd.scan == .interlacedTopFirst)
+        #expect(hd.frameRate == .fps29_97)
+        #expect(hd.pictureFormatName == "1080i59.94")
+        #expect(hd.broadcastStandards == [.atsc1, .atsc3])
+
+        let (sd, _) = try roundTrip("480i.mpg", size: "704x480", rate: "60000/1001", codec: mpeg2i + ["-top", "0"],
+                                    filter: "tinterlace=interleave_bottom,setsar=10/11", timecode: nil)
+        #expect(sd.scan == .interlacedBottomFirst)
+        #expect(sd.pictureFormatName == "480i59.94")
+        #expect(sd.pixelAspectNum == 10 && sd.pixelAspectDen == 11)
+        #expect(sd.displayWidth == 640)
+        #expect(sd.resolutionClass == "SD")
+        #expect(sd.broadcastStandards.contains(.atsc1))
+
+        let (p720, _) = try roundTrip("720p.ts", size: "1280x720", rate: "60000/1001",
+                                      codec: ["-c:v", "libx264", "-preset", "ultrafast"], timecode: nil)
+        #expect(p720.pictureFormatName == "720p59.94")
+        #expect(p720.broadcastStandards == [.atsc1, .atsc3])
     }
 }
 

@@ -154,7 +154,7 @@ struct AssetCard: View {
                             .frame(width: proxy.size.width, height: proxy.size.height)
                             .clipped()
                     } else {
-                        Image(systemName: asset.decodePath == .blackmagicRAW ? "camera.aperture" : "film")
+                        Image(systemName: asset.decodePath.canRender ? "film" : "camera.aperture")
                             .font(.system(size: 30, weight: .light))
                             .foregroundStyle(.tertiary)
                     }
@@ -205,16 +205,21 @@ struct AssetCard: View {
 
     private var subtitle: String {
         var parts: [String] = []
-        if asset.width > 0 { parts.append("\(asset.width)×\(asset.height)") }
-        if asset.durationFrames > 0 { parts.append(String(format: "%.2f fps", asset.frameRate.fps)) }
+        if asset.width > 0 {
+            parts.append(asset.resolutionClass)
+            parts.append(asset.pictureFormatName)
+        } else if !asset.formatName.isEmpty {
+            parts.append(asset.formatName)
+        }
         if let volume = asset.volumeName { parts.append(volume) }
-        return parts.isEmpty ? "Awaiting decode" : parts.joined(separator: "  ·  ")
+        return parts.isEmpty ? "Catalogued" : parts.joined(separator: "  ·  ")
     }
 
     @ViewBuilder private var overlayBadges: some View {
         VStack {
             HStack(spacing: 4) {
                 Badge(text: (asset.videoCodec ?? asset.container ?? "clip").uppercased())
+                if !asset.decodePath.canRender { Badge(text: "RAW", tint: .orange) }
                 if model.hasProxy(asset) { Badge(text: "PROXY", tint: .green) }
                 Spacer()
             }

@@ -282,6 +282,77 @@ func found(_ resolution: SourceResolution) -> Found { Found(resolution.asset?.id
     }
 }
 
+@Suite struct FormatTests {
+    @Test func everyATSCFrameRateHasValidTimecode() throws {
+        let rates: [FrameRate] = [.fps23_976, .fps24, .fps25, .fps29_97, .fps30, .fps50, .fps59_94, .fps60,
+                                  FrameRate(100), FrameRate(120000, 1001), FrameRate(120)]
+        for rate in rates {
+            let oneHour = Timecode("01:00:00:00", rate: rate)
+            #expect(oneHour?.frames == rate.nominal * 3600)
+            #expect(oneHour?.description == "01:00:00:00")
+            if rate.supportsDropFrame {
+                // In drop-frame, one hour of timecode is one hour of real time (to the frame).
+                let drop = try #require(Timecode("01:00:00;00", rate: rate))
+                #expect(abs(rate.seconds(forFrames: drop.frames) - 3600) < 0.01)
+                #expect(drop.description == "01:00:00;00")
+            }
+        }
+        let dropCapable = rates.filter(\.supportsDropFrame)
+        #expect(dropCapable == [.fps29_97, .fps59_94, FrameRate(120000, 1001)])
+        #expect(FrameRate(fps: 119.88) == FrameRate(120000, 1001))
+    }
+
+    @Test func atsc1TableIsComplete() {
+        func atsc1(_ w: Int, _ h: Int, _ rate: FrameRate, _ scan: ScanType = .progressive) -> Bool {
+            PictureFormat.broadcastStandards(width: w, height: h, frameRate: rate, scan: scan).contains(.atsc1)
+        }
+        let film: [FrameRate] = [.fps23_976, .fps24, .fps29_97, .fps30]
+        let fast: [FrameRate] = [.fps59_94, .fps60]
+        // The rates each raster carries, exactly as in A/53 Table 6.2.
+        let all = film + fast
+        #expect(all.filter { atsc1(1920, 1080, $0) } == film)
+        #expect(all.filter { atsc1(1920, 1080, $0, .interlacedTopFirst) } == [.fps29_97, .fps30])
+        #expect(all.filter { atsc1(1280, 720, $0) } == all)
+        #expect(all.filter { atsc1(704, 480, $0) } == all)
+        #expect(all.filter { atsc1(640, 480, $0) } == all)
+        #expect(all.filter { atsc1(704, 480, $0, .interlacedBottomFirst) } == [.fps29_97, .fps30])
+        #expect(!atsc1(3840, 2160, .fps24))
+        #expect(!atsc1(1920, 1080, .fps25))
+    }
+
+    @Test func namesAndClassesHaveNoCeiling() {
+        #expect(PictureFormat.name(height: 2160, frameRate: .fps23_976, scan: .progressive) == "2160p23.976")
+        #expect(PictureFormat.name(height: 1080, frameRate: .fps29_97, scan: .interlacedTopFirst) == "1080i59.94")
+        #expect(PictureFormat.name(height: 1080, frameRate: .fps25, scan: .interlacedTopFirst) == "1080i50")
+        #expect(PictureFormat.name(height: 4320, frameRate: FrameRate(120000, 1001), scan: .progressive) == "4320p119.88")
+        let classes = [(720, 480, "SD"), (1280, 720, "HD"), (1920, 1080, "HD"), (2048, 1080, "2K"),
+                       (3840, 2160, "UHD 4K"), (4096, 2160, "DCI 4K"), (4608, 3164, "4.6K"), (5952, 3968, "6K"),
+                       (6144, 3456, "6K"), (7680, 4320, "UHD 8K"), (8192, 4320, "DCI 8K"), (8640, 5760, "8.6K"),
+                       (12288, 6480, "12K"), (17280, 8640, "17K"), (4480, 3096, "4.5K"), (3424, 2202, "3.4K")]
+        for (w, h, expected) in classes {
+            #expect(PictureFormat.resolutionClass(width: w, height: h) == expected)
+        }
+    }
+
+    @Test func identifiesCameraFormats() {
+        func id(_ ext: String, _ codec: String? = nil, tag: String? = nil, vendor: String? = nil) -> FormatIdentity {
+            FormatIdentity.identify(fileExtension: ext, codec: codec, codecTag: tag, canDecode: codec != nil, vendor: vendor)
+        }
+        #expect(id("mxf", vendor: "Sony MPC-3628") == FormatIdentity(name: "Sony X-OCN / RAW", decodePath: .unsupported))
+        // Sony 8K recorded as XAVC is ordinary HEVC / H.264 and decodes normally.
+        #expect(id("mxf", "h264", vendor: "Sony") == FormatIdentity(name: "H.264 / AVC", decodePath: .ffmpeg))
+        #expect(id("mp4", "hevc", vendor: "Sony") == FormatIdentity(name: "H.265 / HEVC", decodePath: .avFoundation))
+        #expect(id("mxf", vendor: "ARRI") == FormatIdentity(name: "ARRIRAW (MXF)", decodePath: .unsupported))
+        #expect(id("braw").decodePath == .blackmagicRAW)
+        #expect(id("R3D").name == "REDCODE RAW")
+        #expect(id("crm").name == "Canon Cinema RAW Light")
+        #expect(id("mov", "prores", tag: "apch") == FormatIdentity(name: "Apple ProRes 422 HQ", decodePath: .avFoundation))
+        #expect(id("mov", tag: "aprn") == FormatIdentity(name: "Apple ProRes RAW", decodePath: .avFoundation))
+        #expect(id("mxf", "dnxhd") == FormatIdentity(name: "Avid DNxHD / DNxHR", decodePath: .ffmpeg))
+        #expect(id("mov", "somethingnew").decodePath == .ffmpeg)
+    }
+}
+
 @Suite struct FFProbeTests {
     @Test func buildsAssetFromProbeJSON() throws {
         let json = """

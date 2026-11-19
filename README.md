@@ -10,12 +10,14 @@ said and shown in it.
 | --- | --- |
 | Catalog (SQLite): assets, proxies, markers / subclips, transcripts, tags, faces, people | Built, tested |
 | Full-text search across file names, notes, transcripts, tags, markers and named people | Built, tested |
-| SMPTE timecode, including 29.97 / 59.94 drop-frame | Built, tested |
+| SMPTE timecode at any frame rate, with drop-frame for 29.97 / 59.94 / 119.88 | Built, tested |
+| Picture formats: no limit on size or frame rate. Tested with UHD and DCI 4K at 23.976p / 24p, 8K, 8.6K, and the ATSC rasters including 1080i and anamorphic 480i | Built, tested |
+| Format identification: ProRes profiles, ProRes RAW, DNxHR, XAVC, and camera RAW (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE, Canon, Nikon) | Built; RAW identification tested only with stand-in files, not real camera media |
 | Ingest of MOV / MP4 / ProRes / MXF / MKV and other FFmpeg-readable formats | Built, tested |
 | Proxy generation (ProRes Proxy and H.264) carrying source timecode, reel name, audio layout | Built, tested |
 | Source recall: from a proxy file, or from a Premiere XML / Resolve FCPXML / EDL, back to the high-res source | Built, tested |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
-| Blackmagic RAW | Catalogued and relinkable; decoding needs the Blackmagic RAW SDK bridge (not built yet) |
+| Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |
 | macOS app: library grid with hover scrub, player with JKL shuttle, frame stepping, mark in / out, markers and subclips, inspector | Written; verified only by the macOS CI build, not yet run by hand |
 | On-device A.I. (Apple Vision and Speech): speech-to-text, shot detection, scene / object labels, on-screen text, face grouping | Written; verified only by the macOS CI build, not yet run on real footage |
 
@@ -83,7 +85,10 @@ The catalog lives in `~/Library/Application Support/StadaXR MAM`; proxies and th
 
 ## Known gaps
 
-- Blackmagic RAW decode, playback and proxies need a bridge to the Blackmagic RAW SDK.
+- Camera RAW decode, playback and proxies need a bridge to each maker's SDK (Blackmagic RAW,
+  Sony RAW / X-OCN, ARRIRAW, REDCODE). Until then RAW clips are catalogued by name, size and
+  format only; their raster and timecode are filled in where the container exposes them.
+- Interlaced sources are deinterlaced in their proxies.
 - Formats AVFoundation cannot play (MXF, MKV, ...) play through their proxy.
 - Face grouping uses a general image embedding, so its matching threshold needs tuning on
   real footage; a dedicated face-recognition model is the next step.

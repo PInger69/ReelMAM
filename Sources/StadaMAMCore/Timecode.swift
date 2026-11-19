@@ -46,8 +46,8 @@ public struct FrameRate: Codable, Hashable, Sendable {
     /// The integer timecode base (24 for 23.976, 30 for 29.97, ...).
     public var nominal: Int { Int(fps.rounded()) }
 
-    /// Drop-frame timecode only exists for 29.97 and 59.94.
-    public var supportsDropFrame: Bool { denominator == 1001 && (nominal == 30 || nominal == 60) }
+    /// Drop-frame timecode exists for the NTSC rates that are multiples of 30: 29.97, 59.94, 119.88.
+    public var supportsDropFrame: Bool { denominator == 1001 && nominal % 30 == 0 }
 
     public func seconds(forFrames frames: Int) -> Double {
         Double(frames) * Double(denominator) / Double(numerator)

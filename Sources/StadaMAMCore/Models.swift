@@ -9,18 +9,13 @@ public enum DecodePath: String, Codable, Sendable {
     case avFoundation
     /// Blackmagic RAW; requires the Blackmagic RAW SDK.
     case blackmagicRAW
-    /// Everything else (MXF, MKV, DNxHR, XAVC, R3D via plugins ...) goes through FFmpeg.
+    /// Everything FFmpeg can read (MXF, MKV, DNxHR, XAVC, MPEG-2 transport streams ...).
     case ffmpeg
+    /// Identified and catalogued, but no decoder is available yet (e.g. Sony X-OCN, ARRIRAW,
+    /// REDCODE). Searchable and relinkable; playback and proxies need the vendor's SDK.
+    case unsupported
 
-    public static func forFile(extension ext: String) -> DecodePath? {
-        switch ext.lowercased() {
-        case "mov", "mp4", "m4v", "qt": return .avFoundation
-        case "braw": return .blackmagicRAW
-        case "mxf", "mkv", "avi", "webm", "mts", "m2ts", "ts", "mpg", "mpeg", "wmv", "flv", "r3d", "dv", "3gp", "ogv", "vob":
-            return .ffmpeg
-        default: return nil
-        }
-    }
+    public var canRender: Bool { self == .avFoundation || self == .ffmpeg }
 }
 
 /// A catalogued high-resolution source clip.
@@ -47,6 +42,12 @@ public struct Asset: Codable, Identifiable, Hashable, Sendable, FetchableRecord,
     public var reelName: String?
     public var audioChannels: Int
     public var colorSpace: String?
+    /// Human-readable essence name, e.g. "Apple ProRes 422 HQ" or "Sony X-OCN / RAW".
+    public var formatName: String
+    public var scan: ScanType
+    /// Pixel (sample) aspect ratio; 1:1 for square pixels, 10:11 for 4:3 NTSC SD, and so on.
+    public var pixelAspectNum: Int
+    public var pixelAspectDen: Int
     public var capturedAt: Date?
     public var importedAt: Date
     public var rating: Int
@@ -57,7 +58,8 @@ public struct Asset: Codable, Identifiable, Hashable, Sendable, FetchableRecord,
         decodePath: DecodePath = .avFoundation, container: String? = nil, videoCodec: String? = nil,
         width: Int = 0, height: Int = 0, frameRate: FrameRate = .fps24, durationFrames: Int = 0,
         startTimecodeFrames: Int = 0, dropFrame: Bool = false, reelName: String? = nil,
-        audioChannels: Int = 0, colorSpace: String? = nil, capturedAt: Date? = nil,
+        audioChannels: Int = 0, colorSpace: String? = nil, formatName: String = "",
+        scan: ScanType = .progressive, pixelAspect: (num: Int, den: Int) = (1, 1), capturedAt: Date? = nil,
         importedAt: Date = Date(), rating: Int = 0, notes: String = ""
     ) {
         self.id = id
@@ -80,6 +82,10 @@ public struct Asset: Codable, Identifiable, Hashable, Sendable, FetchableRecord,
         self.reelName = reelName
         self.audioChannels = audioChannels
         self.colorSpace = colorSpace
+        self.formatName = formatName
+        self.scan = scan
+        self.pixelAspectNum = max(pixelAspect.num, 1)
+        self.pixelAspectDen = max(pixelAspect.den, 1)
         self.capturedAt = capturedAt
         self.importedAt = importedAt
         self.rating = rating
@@ -89,6 +95,19 @@ public struct Asset: Codable, Identifiable, Hashable, Sendable, FetchableRecord,
     public var frameRate: FrameRate { FrameRate(frameRateNum, frameRateDen) }
     public var durationSeconds: Double { frameRate.seconds(forFrames: durationFrames) }
     public var startTimecode: Timecode { Timecode(frames: startTimecodeFrames, rate: frameRate, dropFrame: dropFrame) }
+
+    /// "2160p23.976", "1080i59.94", "4320p24" ...
+    public var pictureFormatName: String { PictureFormat.name(height: height, frameRate: frameRate, scan: scan) }
+    /// "UHD 4K", "DCI 4K", "UHD 8K", "8.6K" ...
+    public var resolutionClass: String { PictureFormat.resolutionClass(width: width, height: height) }
+    public var broadcastStandards: [PictureFormat.BroadcastStandard] {
+        PictureFormat.broadcastStandards(width: width, height: height, frameRate: frameRate, scan: scan)
+    }
+
+    /// Width as displayed, after applying the pixel aspect ratio (704×480 at 10:11 shows as 640 wide).
+    public var displayWidth: Int {
+        Int((Double(width) * Double(pixelAspectNum) / Double(pixelAspectDen)).rounded())
+    }
 
     /// Source timecode for a frame offset from the start of the clip.
     public func timecode(atFrame frame: Int) -> Timecode { startTimecode.advanced(by: frame) }

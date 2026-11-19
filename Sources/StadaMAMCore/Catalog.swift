@@ -116,6 +116,14 @@ public final class Catalog: Sendable {
                 )
                 """)
         }
+        migrator.registerMigration("v2-picture-format") { db in
+            try db.alter(table: "asset") { t in
+                t.add(column: "formatName", .text).notNull().defaults(to: "")
+                t.add(column: "scan", .text).notNull().defaults(to: ScanType.unknown.rawValue)
+                t.add(column: "pixelAspectNum", .integer).notNull().defaults(to: 1)
+                t.add(column: "pixelAspectDen", .integer).notNull().defaults(to: 1)
+            }
+        }
         return migrator
     }
 
@@ -300,7 +308,8 @@ public final class Catalog: Sendable {
             try db.execute(sql: "INSERT INTO searchIndex (assetID, kind, time, text) VALUES (?, ?, ?, ?)",
                            arguments: [assetID, kind.rawValue, time, text])
         }
-        try add(.asset, nil, [asset.fileName, asset.reelName ?? "", asset.notes].joined(separator: " "))
+        try add(.asset, nil, [asset.fileName, asset.reelName ?? "", asset.notes, asset.formatName,
+                              asset.pictureFormatName, asset.resolutionClass].joined(separator: " "))
         for segment in try TranscriptSegment.filter(Column("assetID") == assetID).fetchAll(db) {
             try add(.transcript, segment.startSeconds, segment.text)
         }

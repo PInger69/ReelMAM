@@ -5,7 +5,7 @@ public enum MediaError: Error, LocalizedError, Equatable {
     case ffmpegNotFound
     case ffmpegFailed(String)
     case noVideoStream(String)
-    case blackmagicRAWSDKRequired
+    case decoderUnavailable(String)
     case isOwnProxy(assetID: String)
 
     public var errorDescription: String? {
@@ -16,8 +16,8 @@ public enum MediaError: Error, LocalizedError, Equatable {
             return "FFmpeg failed: \(message)"
         case .noVideoStream(let path):
             return "No video stream in \((path as NSString).lastPathComponent)."
-        case .blackmagicRAWSDKRequired:
-            return "Blackmagic RAW decoding needs the Blackmagic RAW SDK, which is not installed yet."
+        case .decoderUnavailable(let format):
+            return "\(format.isEmpty ? "This format" : format) is catalogued, but decoding it needs the camera maker's SDK, which is not installed yet."
         case .isOwnProxy:
             return "This file is a StadaXR A.I. MAM proxy, not a source."
         }

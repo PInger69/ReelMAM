@@ -53,7 +53,12 @@ public struct MediaLibrary: Sendable {
     private func probe(path: String) async -> ProbeResult {
         #if os(macOS)
         if NativeMedia.canOpen(path: path), let native = try? await NativeMedia.probe(path: path) {
-            return ProbeResult(asset: native.asset, embeddedAssetID: native.embeddedAssetID)
+            var embeddedID = native.embeddedAssetID
+            // Proxies written by FFmpeg store the ID where only FFmpeg's reader finds it.
+            if embeddedID == nil, let tools {
+                embeddedID = try? await Self.offload { try tools.probe(path: path).embeddedAssetID }
+            }
+            return ProbeResult(asset: native.asset, embeddedAssetID: embeddedID)
         }
         #endif
         guard let tools, let probe = try? await Self.offload({ try tools.probe(path: path) }) else {

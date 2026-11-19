@@ -62,8 +62,11 @@ public enum NativeMedia {
         let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.int64Value ?? 0
         let created = try? await source.load(.creationDate)?.load(.dateValue)
 
+        // If AVFoundation says it can decode the picture, the native pipeline handles the clip
+        // whatever the codec is called.
+        let decodable = (try? await video.load(.isDecodable)) ?? false
         let asset = Asset(
-            sourcePath: path, fileSize: size, decodePath: identity.decodePath,
+            sourcePath: path, fileSize: size, decodePath: decodable ? .avFoundation : identity.decodePath,
             container: url.pathExtension.lowercased(), videoCodec: codec,
             width: Int(dimensions.width), height: Int(dimensions.height), frameRate: rate,
             durationFrames: duration.isFinite ? rate.frames(forSeconds: duration) : 0,
@@ -73,9 +76,15 @@ public enum NativeMedia {
             pixelAspect: (max(aspectH, 1), max(aspectV, 1)), capturedAt: created)
 
         var embeddedID: String?
-        for item in try await source.loadMetadata(for: .quickTimeMetadata) {
-            if (item.key as? String) == ProxyMetadataKey.assetID {
-                embeddedID = try await item.load(.stringValue)
+        var items = (try? await source.load(.metadata)) ?? []
+        for format in (try? await source.load(.availableMetadataFormats)) ?? [] {
+            items += (try? await source.loadMetadata(for: format)) ?? []
+        }
+        for item in items where embeddedID == nil {
+            let key = (item.key as? String) ?? ""
+            let identifier = item.identifier?.rawValue ?? ""
+            if key == ProxyMetadataKey.assetID || identifier.hasSuffix(ProxyMetadataKey.assetID) {
+                embeddedID = try? await item.load(.stringValue)
             }
         }
         return Probe(asset: asset, embeddedAssetID: embeddedID)
@@ -105,26 +114,49 @@ public enum NativeMedia {
         var reelName: String?
     }
 
-    /// Reads the first sample of the timecode track: a big-endian frame number.
+    /// Reads the start frame from the timecode track: its first sample is a big-endian frame number.
     private static func readTimecode(from source: AVURLAsset) async throws -> TimecodeStart? {
-        guard let track = try await source.loadTracks(withMediaType: .timecode).first else { return nil }
-        let reader = try AVAssetReader(asset: source)
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
-        reader.add(output)
-        guard reader.startReading(), let sample = output.copyNextSampleBuffer(),
-              let block = CMSampleBufferGetDataBuffer(sample),
-              let format = CMSampleBufferGetFormatDescription(sample) else { return nil }
-        var raw: UInt32 = 0
-        guard CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: 4, destination: &raw) == kCMBlockBufferNoErr
-        else { return nil }
-        reader.cancelReading()
+        guard let track = try await source.loadTracks(withMediaType: .timecode).first,
+              let format = try await track.load(.formatDescriptions).first else { return nil }
+        guard let frame = firstSampleValue(of: track) ?? firstSampleValueByReading(track, in: source) else { return nil }
         let flags = CMTimeCodeFormatDescriptionGetTimeCodeFlags(format)
         let reference = CMFormatDescriptionGetExtension(
             format, extensionKey: kCMTimeCodeFormatDescriptionExtension_SourceReferenceName) as? [String: Any]
         let reel = reference?[kCMTimeCodeFormatDescriptionKey_Value as String] as? String
-        return TimecodeStart(frame: Int(Int32(bitPattern: UInt32(bigEndian: raw))),
-                             dropFrame: flags & kCMTimeCodeFlag_DropFrame != 0,
+        return TimecodeStart(frame: frame, dropFrame: flags & kCMTimeCodeFlag_DropFrame != 0,
                              reelName: reel?.isEmpty == false ? reel : nil)
+    }
+
+    /// Locates the first timecode sample in the file and reads its four bytes directly.
+    private static func firstSampleValue(of track: AVAssetTrack) -> Int? {
+        guard track.canProvideSampleCursors,
+              let cursor = track.makeSampleCursorAtFirstSampleInDecodeOrder(),
+              let url = cursor.currentChunkStorageURL else { return nil }
+        let range = cursor.currentSampleStorageRange
+        guard range.length >= 4, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: UInt64(range.offset))) != nil,
+              let data = try? handle.read(upToCount: 4), data.count == 4 else { return nil }
+        let raw = data.reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+        return Int(Int32(bitPattern: raw))
+    }
+
+    /// The same value through an asset reader, for files that cannot provide sample cursors.
+    private static func firstSampleValueByReading(_ track: AVAssetTrack, in source: AVURLAsset) -> Int? {
+        guard let reader = try? AVAssetReader(asset: source) else { return nil }
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        guard reader.canAdd(output) else { return nil }
+        reader.add(output)
+        guard reader.startReading() else { return nil }
+        defer { reader.cancelReading() }
+        while let sample = output.copyNextSampleBuffer() {
+            guard let block = CMSampleBufferGetDataBuffer(sample), CMBlockBufferGetDataLength(block) >= 4 else { continue }
+            var raw: UInt32 = 0
+            guard CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: 4, destination: &raw) == kCMBlockBufferNoErr
+            else { return nil }
+            return Int(Int32(bitPattern: UInt32(bigEndian: raw)))
+        }
+        return nil
     }
 
     // MARK: Proxy rendering
@@ -188,6 +220,9 @@ public enum NativeMedia {
         }
         let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
         videoInput.expectsMediaDataInRealTime = false
+        // Keep frame times exact: at the default timescale 23.976 fps rounds to 24.
+        videoInput.mediaTimeScale = CMTimeScale(asset.frameRateNum)
+        writer.movieTimeScale = CMTimeScale(asset.frameRateNum)
         guard writer.canAdd(videoInput) else { throw RenderError.cannotConfigure("picture encoding") }
         writer.add(videoInput)
 

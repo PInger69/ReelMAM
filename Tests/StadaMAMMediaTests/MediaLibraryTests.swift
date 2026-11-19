@@ -282,15 +282,15 @@ struct MediaLibraryTests {
 
     @Test func atscInterlacedAndAnamorphicFormats() async throws {
         let mpeg2i = ["-c:v", "mpeg2video", "-flags", "+ildct+ilme", "-b:v", "12M"]
-        let (hd, _) = try await roundTrip("1080i.ts", size: "1920x1080", rate: "60000/1001", codec: mpeg2i + ["-top", "1"],
-                                    filter: "tinterlace=interleave_top", timecode: nil)
+        let (hd, _) = try await roundTrip("1080i.ts", size: "1920x1080", rate: "60000/1001", codec: mpeg2i,
+                                          filter: "tinterlace=interleave_top,setfield=tff", timecode: nil)
         #expect(hd.scan == .interlacedTopFirst)
         #expect(hd.frameRate == .fps29_97)
         #expect(hd.pictureFormatName == "1080i59.94")
         #expect(hd.broadcastStandards == [.atsc1, .atsc3])
 
-        let (sd, _) = try await roundTrip("480i.mpg", size: "704x480", rate: "60000/1001", codec: mpeg2i + ["-top", "0"],
-                                    filter: "tinterlace=interleave_bottom,setsar=10/11", timecode: nil)
+        let (sd, _) = try await roundTrip("480i.mpg", size: "704x480", rate: "60000/1001", codec: mpeg2i,
+                                          filter: "tinterlace=interleave_bottom,setfield=bff,setsar=10/11", timecode: nil)
         #expect(sd.scan == .interlacedBottomFirst)
         #expect(sd.pictureFormatName == "480i59.94")
         #expect(sd.pixelAspectNum == 10 && sd.pixelAspectDen == 11)

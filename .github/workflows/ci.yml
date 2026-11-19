@@ -35,7 +35,7 @@ jobs:
       - name: Build tests
         run: swift build --build-tests
       - name: Test packages
-        timeout-minutes: 12
+        timeout-minutes: 20
         run: |
           # If the tests stall, show what is running and where it is stuck before giving up.
           swift test --skip-build &
@@ -54,9 +54,18 @@ jobs:
           if [ "$status" -ne 0 ]; then
             # A crash in a parallel run does not say which test died: run them one at a time
             # and show the crash report.
-            echo "::group::Serial rerun"
-            swift test --skip-build --no-parallel 2>&1 | tail -n 60 || true
-            echo "::endgroup::"
+            # Run each suite by itself to find the one that takes the process down.
+            echo "Suites that do not finish cleanly:"
+            swift test list --skip-build 2>/dev/null | sed -E 's|/.*||' | sort -u > suites.txt || true
+            while read -r suite; do
+              [ -n "$suite" ] || continue
+              if ! swift test --skip-build --filter "^${suite}/" > suite.log 2>&1; then
+                echo "=== $suite"
+                grep -E "✘|error:|signal|Fatal|started\\.$" suite.log | tail -n 25
+              fi
+            done < suites.txt
+            sleep 20
+            ls -la "$HOME/Library/Logs/DiagnosticReports" || true
             for report in "$HOME"/Library/Logs/DiagnosticReports/*.ips; do
               [ -f "$report" ] || continue
               echo "::group::Crash report $(basename "$report")"

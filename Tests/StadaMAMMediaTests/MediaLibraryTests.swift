@@ -51,6 +51,7 @@ struct MediaLibraryTests {
         let progress = ProgressBox()
         let proxy = try library.makeProxy(for: asset, preset: .h264_720) { progress.set($0) }
         #expect(proxy.status == .ready)
+        #expect(proxy.mismatch == nil)
         #expect(proxy.fileName == "A001_C003.mov")
         #expect(progress.value > 0)
 
@@ -181,6 +182,7 @@ struct MediaLibraryTests {
         #expect(proxyAsset.durationFrames == asset.durationFrames)
         #expect(proxyAsset.startTimecode.description == asset.startTimecode.description)
         #expect(proxyAsset.scan == .progressive)
+        #expect(proxy.mismatch == nil)
         return (asset, proxyAsset)
     }
 

@@ -145,6 +145,9 @@ private struct InfoPane: View {
         var parts = [proxy.preset.displayName, proxy.status.rawValue]
         if let pipeline = proxy.pipeline { parts.append(pipeline.displayName) }
         if let speed = proxy.speed { parts.append(String(format: "%.1f× real time", speed)) }
+        if proxy.status == .ready {
+            parts.append(proxy.mismatch.map { "⚠ Not safe for editing: \($0)" } ?? "Verified against source")
+        }
         return parts.joined(separator: "  ·  ")
     }
 

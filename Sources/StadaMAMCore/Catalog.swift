@@ -130,6 +130,11 @@ public final class Catalog: Sendable {
                 t.add(column: "speed", .double)
             }
         }
+        migrator.registerMigration("v4-proxy-verification") { db in
+            try db.alter(table: "proxy") { t in
+                t.add(column: "mismatch", .text)
+            }
+        }
         return migrator
     }
 

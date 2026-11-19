@@ -126,6 +126,21 @@ private func makeAsset(_ path: String, start: Int = 0, duration: Int = 240, reel
         #expect(args.last == "/tmp/out.mov")
     }
 
+    @Test func verifierReportsEveryDifference() {
+        let source = makeAsset("/Volumes/RAID/A001.mov", start: 86400, duration: 240)
+        var proxy = makeAsset("/Proxies/A001.mov", start: 86400, duration: 240)
+        #expect(ProxyVerifier.mismatch(source: source, proxy: proxy) == nil)
+        proxy.durationFrames = 239
+        proxy.startTimecodeFrames = 0
+        proxy.audioChannels = 2
+        #expect(ProxyVerifier.mismatch(source: source, proxy: proxy)
+            == "239 frames instead of 240; start timecode 00:00:00:00 instead of 01:00:00:00; 2 audio channels instead of 0")
+        proxy = makeAsset("/Proxies/A001.mov", start: 86400, duration: 240)
+        proxy.frameRateNum = 24000
+        proxy.frameRateDen = 1001
+        #expect(ProxyVerifier.mismatch(source: source, proxy: proxy) == "frame rate 23.976 instead of 24")
+    }
+
     @Test func pipelinesBuildTheRightCommand() {
         var asset = makeAsset("/Volumes/RAID/A001.mov")  // 4096x2160
         func args(_ pipeline: RenderPipeline, _ preset: ProxyPreset = .proResProxyHalf) -> [String] {

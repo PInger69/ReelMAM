@@ -107,6 +107,10 @@ public struct MediaLibrary: Sendable {
             do {
                 try tools.render(plan, progress: progress)
                 let elapsed = max(Date().timeIntervalSince(started), 0.001)
+                // Read the finished file back and confirm it is interchangeable with its source.
+                let rendered = try tools.probe(path: path).asset(path: path)
+                record.mismatch = rendered.map { ProxyVerifier.mismatch(source: asset, proxy: $0) }
+                    ?? "the rendered file has no picture"
                 record.status = .ready
                 record.pipeline = plan.pipeline
                 record.speed = asset.durationSeconds > 0 ? asset.durationSeconds / elapsed : nil

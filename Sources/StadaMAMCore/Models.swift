@@ -128,6 +128,9 @@ public struct ProxyRecord: Codable, Identifiable, Hashable, Sendable, FetchableR
     /// The pipeline that produced the file, and how fast it rendered relative to real time.
     public var pipeline: RenderPipeline?
     public var speed: Double?
+    /// Nil when the finished proxy was checked and matches its source frame for frame.
+    /// Otherwise what differs; such a proxy is fine for viewing but must not go to an editor.
+    public var mismatch: String?
 
     public init(id: String = newID(), assetID: String, path: String, preset: ProxyPreset,
                 status: ProxyStatus = .queued, createdAt: Date = Date()) {

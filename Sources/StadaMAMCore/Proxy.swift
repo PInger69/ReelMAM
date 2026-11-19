@@ -170,7 +170,9 @@ public struct ProxyRenderPlan: Sendable {
                 : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
             if cpuFrames { args += ["-pix_fmt", "yuv420p"] }
             // A short GOP keeps scrubbing responsive in the NLE.
-            args += ["-g", "\(max(asset.frameRate.nominal / 2, 1))", "-c:a", "aac", "-b:a", "192k"]
+            // Audio stays uncompressed with the source's tracks and channels intact: editing apps
+            // refuse to attach a proxy whose audio layout differs from its source.
+            args += ["-g", "\(max(asset.frameRate.nominal / 2, 1))", "-c:a", "pcm_s16le"]
         }
         // Matching start timecode and reel name are what Premiere / Resolve / Final Cut relink on.
         args += ["-timecode", asset.startTimecode.description]
@@ -180,5 +182,27 @@ public struct ProxyRenderPlan: Sendable {
                  "-metadata", "\(ProxyMetadataKey.sourcePath)=\(asset.sourcePath)",
                  "-movflags", "+use_metadata_tags", "-f", "mov", outputPath]
         return args
+    }
+}
+
+/// Checks that a rendered proxy is frame-for-frame interchangeable with its source —
+/// the condition for an editing app to attach it and for an edit to conform back.
+public enum ProxyVerifier {
+    /// Returns nil when the proxy matches, otherwise a description of every difference.
+    public static func mismatch(source: Asset, proxy: Asset) -> String? {
+        var problems: [String] = []
+        if proxy.frameRate != source.frameRate {
+            problems.append("frame rate \(PictureFormat.rateLabel(proxy.frameRate.fps)) instead of \(PictureFormat.rateLabel(source.frameRate.fps))")
+        }
+        if proxy.durationFrames != source.durationFrames {
+            problems.append("\(proxy.durationFrames) frames instead of \(source.durationFrames)")
+        }
+        if proxy.startTimecodeFrames != source.startTimecodeFrames || proxy.dropFrame != source.dropFrame {
+            problems.append("start timecode \(proxy.startTimecode) instead of \(source.startTimecode)")
+        }
+        if proxy.audioChannels != source.audioChannels {
+            problems.append("\(proxy.audioChannels) audio channels instead of \(source.audioChannels)")
+        }
+        return problems.isEmpty ? nil : problems.joined(separator: "; ")
     }
 }

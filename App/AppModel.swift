@@ -158,6 +158,11 @@ final class AppModel {
         if let demoMedia = ProcessInfo.processInfo.environment["STADAMAM_DEMO_MEDIA"] {
             opensFirstClip = true
             importMedia(at: [demoMedia])
+            // Fit the window to the screen so the whole interface is visible in a screenshot.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if let screen = NSScreen.main { NSApp.windows.first?.setFrame(screen.visibleFrame, display: true) }
+            }
         }
     }
 

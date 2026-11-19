@@ -212,7 +212,7 @@ struct TransportBar: View {
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
-            .frame(minWidth: 150, alignment: .leading)
+            .fixedSize()
 
             Spacer(minLength: 0)
 
@@ -240,8 +240,8 @@ struct TransportBar: View {
             Spacer(minLength: 0)
 
             HStack(spacing: 6) {
-                Button("In") { player.markIn() }.help("Mark in (I)")
-                Button("Out") { player.markOut() }.help("Mark out (O)")
+                Button("In") { player.markIn() }.help("Mark in (I)").fixedSize()
+                Button("Out") { player.markOut() }.help("Mark out (O)").fixedSize()
                 Button { player.clearMarks() } label: { Image(systemName: "xmark") }
                     .help("Clear marks (X)")
                     .disabled(player.inFrame == nil && player.outFrame == nil)
@@ -249,10 +249,13 @@ struct TransportBar: View {
                     Image(systemName: "bookmark.fill")
                 }
                 .help("Add marker (M)")
-                Button("Save Subclip") {
+                Button {
                     model.addMarker(to: asset, inFrame: player.inFrame ?? 0,
                                     outFrame: player.outFrame ?? asset.durationFrames - 1)
+                } label: {
+                    Image(systemName: "scissors")
                 }
+                .help("Save the marked range as a subclip")
                 .disabled(player.inFrame == nil && player.outFrame == nil)
             }
             .controlSize(.small)
@@ -269,7 +272,7 @@ struct TransportBar: View {
                     Text("Duration").font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            .frame(minWidth: 96, alignment: .trailing)
+            .fixedSize()
         }
     }
 

@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "StadaMAMMedia", targets: ["StadaMAMMedia"]),
         .library(name: "StadaMAMAI", targets: ["StadaMAMAI"]),
         .library(name: "StadaMAMRemote", targets: ["StadaMAMRemote"]),
+        .executable(name: "stradaxr-ingest", targets: ["stradaxr-ingest"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
@@ -44,6 +45,12 @@ let package = Package(
                 "StadaMAMCore",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        // The headless ingest client: watches folders, catalogues clips and renders proxies.
+        .executableTarget(
+            name: "stradaxr-ingest",
+            dependencies: ["StadaMAMMedia"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(name: "StadaMAMCoreTests", dependencies: ["StadaMAMCore"]),

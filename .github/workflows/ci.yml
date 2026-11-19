@@ -121,6 +121,11 @@ jobs:
           codesign --verify --deep "$APP"
           mkdir -p dist
           ditto -c -k --keepParent "$APP" dist/StradaXR-AI-MAM.zip
+          # The ingest client: a command-line program built from the same package.
+          swift build -c release --product stradaxr-ingest
+          cp "$(swift build -c release --show-bin-path)/stradaxr-ingest" dist/stradaxr-ingest
+          codesign --force --sign - dist/stradaxr-ingest
+          dist/stradaxr-ingest --help | head -n 3
           ls -la dist
       - name: Upload the app
         uses: actions/upload-artifact@v4

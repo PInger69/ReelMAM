@@ -250,6 +250,26 @@ public final class Catalog: Sendable {
         try assign(sightingIDs: [], to: person)
     }
 
+    // MARK: Library facets
+
+    public func assetIDsWithReadyProxy() throws -> Set<String> {
+        try db.read {
+            try String.fetchSet($0, sql: "SELECT DISTINCT assetID FROM proxy WHERE status = ?",
+                                arguments: [ProxyStatus.ready.rawValue])
+        }
+    }
+
+    public func assetIDsWithTranscript() throws -> Set<String> {
+        try db.read { try String.fetchSet($0, sql: "SELECT DISTINCT assetID FROM transcriptSegment") }
+    }
+
+    public func assetIDs(forPerson personID: String) throws -> Set<String> {
+        try db.read {
+            try String.fetchSet($0, sql: "SELECT DISTINCT assetID FROM faceSighting WHERE personID = ?",
+                                arguments: [personID])
+        }
+    }
+
     // MARK: Search
 
     /// Full-text search across file names, notes, transcripts, tags, markers and named people.

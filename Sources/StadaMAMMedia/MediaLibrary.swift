@@ -1,5 +1,5 @@
 import Foundation
-import ReelMAMCore
+import StadaMAMCore
 
 /// Ingest, proxy generation and source recall — the operations the app drives.
 /// All methods block; call them off the main thread.
@@ -54,7 +54,7 @@ public struct MediaLibrary: Sendable {
             return try catalog.save(Asset(sourcePath: path, fileSize: size, decodePath: .blackmagicRAW, container: "braw"))
         }
         let probe = try tools.probe(path: path)
-        if let id = probe.embeddedAssetID { throw MediaError.isReelMAMProxy(assetID: id) }
+        if let id = probe.embeddedAssetID { throw MediaError.isOwnProxy(assetID: id) }
         guard var asset = probe.asset(path: path) else { throw MediaError.noVideoStream(path) }
         if asset.fileSize == 0 { asset.fileSize = size }
         return try catalog.save(asset)

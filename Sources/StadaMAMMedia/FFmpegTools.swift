@@ -1,12 +1,12 @@
 import Foundation
-import ReelMAMCore
+import StadaMAMCore
 
 public enum MediaError: Error, LocalizedError, Equatable {
     case ffmpegNotFound
     case ffmpegFailed(String)
     case noVideoStream(String)
     case blackmagicRAWSDKRequired
-    case isReelMAMProxy(assetID: String)
+    case isOwnProxy(assetID: String)
 
     public var errorDescription: String? {
         switch self {
@@ -18,8 +18,8 @@ public enum MediaError: Error, LocalizedError, Equatable {
             return "No video stream in \((path as NSString).lastPathComponent)."
         case .blackmagicRAWSDKRequired:
             return "Blackmagic RAW decoding needs the Blackmagic RAW SDK, which is not installed yet."
-        case .isReelMAMProxy:
-            return "This file is a ReelMAM proxy, not a source."
+        case .isOwnProxy:
+            return "This file is a StadaXR A.I. MAM proxy, not a source."
         }
     }
 }

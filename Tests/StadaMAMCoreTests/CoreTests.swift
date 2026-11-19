@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import ReelMAMCore
+@testable import StadaMAMCore
 
 @Suite struct TimecodeTests {
     @Test func nonDropRoundTrip() {
@@ -88,6 +88,14 @@ private func makeAsset(_ path: String, start: Int = 0, duration: Int = 240, reel
         #expect(hit?.kind == .person)
         #expect(hit?.timeSeconds == 4)
         #expect(try catalog.faces(forAsset: asset.id).first?.vector == [1, 0, 0])
+        let person = try #require(try catalog.people().first)
+        #expect(try catalog.assetIDs(forPerson: person.id) == [asset.id])
+        try catalog.replaceTranscript(assetID: asset.id, with: [
+            TranscriptSegment(assetID: asset.id, startSeconds: 0, endSeconds: 1, text: "hi"),
+        ])
+        try catalog.save(ProxyRecord(assetID: asset.id, path: "/p/A.mov", preset: .h264_720, status: .ready))
+        #expect(try catalog.assetIDsWithTranscript() == [asset.id])
+        #expect(try catalog.assetIDsWithReadyProxy() == [asset.id])
     }
 }
 
@@ -283,7 +291,7 @@ func found(_ resolution: SourceResolution) -> Found { Found(resolution.asset?.id
               {"codec_type":"audio","codec_name":"pcm_s24le","channels":2},
               {"codec_type":"data","tags":{"timecode":"01:00:00;00"}}],
              "format":{"format_name":"mov,mp4","duration":"10.01","size":"123456",
-              "tags":{"com.reelmam.asset-id":"ABC","creation_time":"2026-03-01T10:00:00.000000Z"}}}
+              "tags":{"com.stadaxr.mam.asset-id":"ABC","creation_time":"2026-03-01T10:00:00.000000Z"}}}
             """
         let probe = try FFProbeResult(json: Data(json.utf8))
         let asset = try #require(probe.asset(path: "/Volumes/RAID/clip.mov"))

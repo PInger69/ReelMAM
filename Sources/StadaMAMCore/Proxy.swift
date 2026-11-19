@@ -66,8 +66,8 @@ public enum ProxyNaming: String, Codable, Sendable {
 /// Metadata keys written into every proxy so it can always be traced back to its source,
 /// even after it has been renamed, moved, or passed through an NLE.
 public enum ProxyMetadataKey {
-    public static let assetID = "com.reelmam.asset-id"
-    public static let sourcePath = "com.reelmam.source-path"
+    public static let assetID = "com.stadaxr.mam.asset-id"
+    public static let sourcePath = "com.stadaxr.mam.source-path"
 }
 
 /// Builds the FFmpeg invocation that renders a proxy.

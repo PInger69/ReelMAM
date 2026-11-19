@@ -1,7 +1,7 @@
 import Foundation
 import Testing
-import ReelMAMCore
-@testable import ReelMAMMedia
+import StadaMAMCore
+@testable import StadaMAMMedia
 
 /// End-to-end against real FFmpeg: ingest, proxy, and recall of the source from the proxy.
 /// Skipped automatically on machines without FFmpeg.
@@ -11,7 +11,7 @@ struct MediaLibraryTests {
     let root: String
 
     init() throws {
-        root = NSTemporaryDirectory() + "reelmam-tests-" + UUID().uuidString
+        root = NSTemporaryDirectory() + "stadamam-tests-" + UUID().uuidString
         try FileManager.default.createDirectory(atPath: root + "/Volumes/RAID/Day 1", withIntermediateDirectories: true)
     }
 
@@ -71,8 +71,8 @@ struct MediaLibraryTests {
         #expect(recalled.asset?.id == asset.id)
         #expect(recalled.evidence == .embeddedID)
 
-        // A ReelMAM proxy is never ingested as if it were a source.
-        #expect(throws: MediaError.isReelMAMProxy(assetID: asset.id)) { try library.importFile(at: moved) }
+        // One of our own proxies is never ingested as if it were a source.
+        #expect(throws: MediaError.isOwnProxy(assetID: asset.id)) { try library.importFile(at: moved) }
         #expect(library.playablePath(for: asset) == proxy.path)
     }
 

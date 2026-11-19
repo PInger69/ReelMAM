@@ -1,6 +1,6 @@
 import Foundation
 
-// Pure post-processing for AI output. The Vision / Speech calls live in ReelMAMAI;
+// Pure post-processing for AI output. The Vision / Speech calls live in StadaMAMAI;
 // everything here is deterministic and unit-tested.
 
 /// One recognised word with timing, as produced by a speech recogniser.

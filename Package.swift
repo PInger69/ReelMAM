@@ -2,11 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "ReelMAM",
+    name: "StadaMAM",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "ReelMAMCore", targets: ["ReelMAMCore"]),
-        .library(name: "ReelMAMMedia", targets: ["ReelMAMMedia"]),
+        .library(name: "StadaMAMCore", targets: ["StadaMAMCore"]),
+        .library(name: "StadaMAMMedia", targets: ["StadaMAMMedia"]),
+        .library(name: "StadaMAMAI", targets: ["StadaMAMAI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
@@ -15,7 +16,7 @@ let package = Package(
         // Platform-independent: catalog, timecode, proxy planning, relink logic.
         // Builds and is tested on Linux as well as macOS.
         .target(
-            name: "ReelMAMCore",
+            name: "StadaMAMCore",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .target(name: "CSQLiteLinuxShim", condition: .when(platforms: [.linux])),
@@ -25,11 +26,17 @@ let package = Package(
         .target(name: "CSQLiteLinuxShim"),
         // Ingest, proxy rendering, thumbnails and source recall, driven through FFmpeg.
         .target(
-            name: "ReelMAMMedia",
-            dependencies: ["ReelMAMCore"],
+            name: "StadaMAMMedia",
+            dependencies: ["StadaMAMCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
-        .testTarget(name: "ReelMAMCoreTests", dependencies: ["ReelMAMCore"]),
-        .testTarget(name: "ReelMAMMediaTests", dependencies: ["ReelMAMMedia"]),
+        // macOS only (Vision / Speech): transcription, faces, scene and text recognition.
+        .target(
+            name: "StadaMAMAI",
+            dependencies: ["StadaMAMCore"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(name: "StadaMAMCoreTests", dependencies: ["StadaMAMCore"]),
+        .testTarget(name: "StadaMAMMediaTests", dependencies: ["StadaMAMMedia"]),
     ]
 )

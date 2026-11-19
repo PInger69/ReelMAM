@@ -40,7 +40,7 @@ public struct FFProbeResult: Decodable, Sendable {
         return nil
     }
 
-    /// The ReelMAM asset ID embedded in a proxy, if this file is one of ours.
+    /// The catalog asset ID embedded in a proxy, if this file is one of ours.
     public var embeddedAssetID: String? { tag(ProxyMetadataKey.assetID) }
     public var embeddedSourcePath: String? { tag(ProxyMetadataKey.sourcePath) }
     public var timecodeString: String? { tag("timecode") }

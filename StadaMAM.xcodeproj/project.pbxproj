@@ -1,0 +1,425 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		036FCB10F08817D66EF1D28C /* RemoteSharing.swift in Sources */ = {isa = PBXBuildFile; fileRef = D019A4D21BA6325610B17354 /* RemoteSharing.swift */; };
+		09FD0B8D0DB1CEAAA1F7A0FC /* WatchFoldersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA4AABF05B89A7AE78339F27 /* WatchFoldersView.swift */; };
+		1EF197B6784CC78E43C1AD75 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6466B04042D4A32DBBA3C96 /* ContentView.swift */; };
+		2391F0A9E9233446703EBB04 /* CutsEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99E9FC2D96F607BA95D581C1 /* CutsEditor.swift */; };
+		2CA617B0E19115B99EA4EC19 /* StadaMAMMedia in Frameworks */ = {isa = PBXBuildFile; productRef = 70E1C3F211F33C3610A80188 /* StadaMAMMedia */; };
+		361B4BAE0154119575D86ED8 /* RecallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82CF8052013673A8997EC0BF /* RecallView.swift */; };
+		43E435A18D4B2F6C407F130C /* ClipDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5EFEF9E4614A1DF49C989C53 /* ClipDetailView.swift */; };
+		47903042E969B8160146BBF6 /* RemoteSharingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCBEC29A3BE68DDAACEEB142 /* RemoteSharingView.swift */; };
+		4FD46195E7F669A39D70D300 /* StadaMAMApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F39B99EB7192EF3726CAD4CC /* StadaMAMApp.swift */; };
+		542DAF50C2B4BCE3BF2CC51D /* ContinuousIngest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8134F0A40DCD0836344F14AA /* ContinuousIngest.swift */; };
+		561F6A2A9D53795537FEF626 /* SequenceEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D44636AD82779D89D6279DD /* SequenceEditorView.swift */; };
+		5DA500E6C121B6D602BC57B3 /* PersonPortrait.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD969BB3DE7B181768A8FF44 /* PersonPortrait.swift */; };
+		803D9652925C0C094CEEC043 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42AC94AEBE62BF585BA3528D /* AppModel.swift */; };
+		89504513F5BC370BBCAFCC38 /* InspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8E9620C39BAAA7FD54F0AF9 /* InspectorView.swift */; };
+		8F3F146A77D223044792BB21 /* StadaMAMCore in Frameworks */ = {isa = PBXBuildFile; productRef = 29C557DD8863EAC78AF32A2B /* StadaMAMCore */; };
+		9AE298AAEDD73CBFABDD3DBF /* PlayerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63FF0D8504504F05FDEE4C41 /* PlayerController.swift */; };
+		B917446FAC7066BCEE25BC9D /* StadaMAMRemote in Frameworks */ = {isa = PBXBuildFile; productRef = F499CEBD76FCA9B0CAC50740 /* StadaMAMRemote */; };
+		C6E4EEB526737203E5BF1142 /* LabelRulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C17BCA33296AAB9DB5B0E2E /* LabelRulesView.swift */; };
+		E6D0C607F4541B40CF401E83 /* StadaMAMAI in Frameworks */ = {isa = PBXBuildFile; productRef = 8019241C5F2211616F651EBF /* StadaMAMAI */; };
+		EC5B942B47CBA48EC60C4802 /* Keychain.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFACEA3ED7A1F889D03B3426 /* Keychain.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0AC315429AA2BE70AAFE59BA /* StadaMAM.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StadaMAM.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		42AC94AEBE62BF585BA3528D /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		5D44636AD82779D89D6279DD /* SequenceEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SequenceEditorView.swift; sourceTree = "<group>"; };
+		5EFEF9E4614A1DF49C989C53 /* ClipDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipDetailView.swift; sourceTree = "<group>"; };
+		63FF0D8504504F05FDEE4C41 /* PlayerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerController.swift; sourceTree = "<group>"; };
+		6C17BCA33296AAB9DB5B0E2E /* LabelRulesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LabelRulesView.swift; sourceTree = "<group>"; };
+		78C1546DF3C68AF0366A956A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		8134F0A40DCD0836344F14AA /* ContinuousIngest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContinuousIngest.swift; sourceTree = "<group>"; };
+		82CF8052013673A8997EC0BF /* RecallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecallView.swift; sourceTree = "<group>"; };
+		99E9FC2D96F607BA95D581C1 /* CutsEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CutsEditor.swift; sourceTree = "<group>"; };
+		AA4AABF05B89A7AE78339F27 /* WatchFoldersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchFoldersView.swift; sourceTree = "<group>"; };
+		AD969BB3DE7B181768A8FF44 /* PersonPortrait.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonPortrait.swift; sourceTree = "<group>"; };
+		C6466B04042D4A32DBBA3C96 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		D019A4D21BA6325610B17354 /* RemoteSharing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSharing.swift; sourceTree = "<group>"; };
+		DFACEA3ED7A1F889D03B3426 /* Keychain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Keychain.swift; sourceTree = "<group>"; };
+		E2C950D0FFC8D2E16CCD325D /* ReelMAM */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ReelMAM; path = .; sourceTree = SOURCE_ROOT; };
+		F39B99EB7192EF3726CAD4CC /* StadaMAMApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StadaMAMApp.swift; sourceTree = "<group>"; };
+		F8E9620C39BAAA7FD54F0AF9 /* InspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorView.swift; sourceTree = "<group>"; };
+		FCBEC29A3BE68DDAACEEB142 /* RemoteSharingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSharingView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C0DA5DB6B779B6B0F8313CE6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8F3F146A77D223044792BB21 /* StadaMAMCore in Frameworks */,
+				2CA617B0E19115B99EA4EC19 /* StadaMAMMedia in Frameworks */,
+				E6D0C607F4541B40CF401E83 /* StadaMAMAI in Frameworks */,
+				B917446FAC7066BCEE25BC9D /* StadaMAMRemote in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		54A06D577115F4EE66DDF71E /* App */ = {
+			isa = PBXGroup;
+			children = (
+				42AC94AEBE62BF585BA3528D /* AppModel.swift */,
+				8134F0A40DCD0836344F14AA /* ContinuousIngest.swift */,
+				99E9FC2D96F607BA95D581C1 /* CutsEditor.swift */,
+				78C1546DF3C68AF0366A956A /* Info.plist */,
+				DFACEA3ED7A1F889D03B3426 /* Keychain.swift */,
+				63FF0D8504504F05FDEE4C41 /* PlayerController.swift */,
+				D019A4D21BA6325610B17354 /* RemoteSharing.swift */,
+				F39B99EB7192EF3726CAD4CC /* StadaMAMApp.swift */,
+				88AB2C29CF802040DB960A4A /* Views */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		6EC0F8931189248CFA629335 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0AC315429AA2BE70AAFE59BA /* StadaMAM.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		88AB2C29CF802040DB960A4A /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				5EFEF9E4614A1DF49C989C53 /* ClipDetailView.swift */,
+				C6466B04042D4A32DBBA3C96 /* ContentView.swift */,
+				F8E9620C39BAAA7FD54F0AF9 /* InspectorView.swift */,
+				6C17BCA33296AAB9DB5B0E2E /* LabelRulesView.swift */,
+				AD969BB3DE7B181768A8FF44 /* PersonPortrait.swift */,
+				82CF8052013673A8997EC0BF /* RecallView.swift */,
+				FCBEC29A3BE68DDAACEEB142 /* RemoteSharingView.swift */,
+				5D44636AD82779D89D6279DD /* SequenceEditorView.swift */,
+				AA4AABF05B89A7AE78339F27 /* WatchFoldersView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		98066B28C9B8C911E219F9E2 = {
+			isa = PBXGroup;
+			children = (
+				54A06D577115F4EE66DDF71E /* App */,
+				DEEB8ABEC555866B4D6B7949 /* Packages */,
+				6EC0F8931189248CFA629335 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		DEEB8ABEC555866B4D6B7949 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				E2C950D0FFC8D2E16CCD325D /* ReelMAM */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5D2F2CFC1B77F5C2E9DF3D6B /* StadaMAM */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A9FFEF8333E29699BF0424E6 /* Build configuration list for PBXNativeTarget "StadaMAM" */;
+			buildPhases = (
+				59F0DC0608C4525F85FD8CD8 /* Sources */,
+				C0DA5DB6B779B6B0F8313CE6 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = StadaMAM;
+			packageProductDependencies = (
+				29C557DD8863EAC78AF32A2B /* StadaMAMCore */,
+				70E1C3F211F33C3610A80188 /* StadaMAMMedia */,
+				8019241C5F2211616F651EBF /* StadaMAMAI */,
+				F499CEBD76FCA9B0CAC50740 /* StadaMAMRemote */,
+			);
+			productName = StadaMAM;
+			productReference = 0AC315429AA2BE70AAFE59BA /* StadaMAM.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D2520010B272AA972EB837D1 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					5D2F2CFC1B77F5C2E9DF3D6B = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 8DB98E67EFBC1B7A7AB16505 /* Build configuration list for PBXProject "StadaMAM" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 98066B28C9B8C911E219F9E2;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				E51881496CD8E3D099029694 /* XCLocalSwiftPackageReference "." */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 6EC0F8931189248CFA629335 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5D2F2CFC1B77F5C2E9DF3D6B /* StadaMAM */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		59F0DC0608C4525F85FD8CD8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				803D9652925C0C094CEEC043 /* AppModel.swift in Sources */,
+				43E435A18D4B2F6C407F130C /* ClipDetailView.swift in Sources */,
+				1EF197B6784CC78E43C1AD75 /* ContentView.swift in Sources */,
+				542DAF50C2B4BCE3BF2CC51D /* ContinuousIngest.swift in Sources */,
+				2391F0A9E9233446703EBB04 /* CutsEditor.swift in Sources */,
+				89504513F5BC370BBCAFCC38 /* InspectorView.swift in Sources */,
+				EC5B942B47CBA48EC60C4802 /* Keychain.swift in Sources */,
+				C6E4EEB526737203E5BF1142 /* LabelRulesView.swift in Sources */,
+				5DA500E6C121B6D602BC57B3 /* PersonPortrait.swift in Sources */,
+				9AE298AAEDD73CBFABDD3DBF /* PlayerController.swift in Sources */,
+				361B4BAE0154119575D86ED8 /* RecallView.swift in Sources */,
+				036FCB10F08817D66EF1D28C /* RemoteSharing.swift in Sources */,
+				47903042E969B8160146BBF6 /* RemoteSharingView.swift in Sources */,
+				561F6A2A9D53795537FEF626 /* SequenceEditorView.swift in Sources */,
+				4FD46195E7F669A39D70D300 /* StadaMAMApp.swift in Sources */,
+				09FD0B8D0DB1CEAAA1F7A0FC /* WatchFoldersView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		2BB7A58B7E7FEBDB49F4B5EB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				EXCLUDED_ARCHS = x86_64;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.stadaxr.mam;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		32108D739B56154FFE664CA9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		D69B9034FC7D0252012D3317 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				EXCLUDED_ARCHS = x86_64;
+				INFOPLIST_FILE = App/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.stadaxr.mam;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		D99525AA019A0B9DE7BB152B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		8DB98E67EFBC1B7A7AB16505 /* Build configuration list for PBXProject "StadaMAM" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				32108D739B56154FFE664CA9 /* Debug */,
+				D99525AA019A0B9DE7BB152B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A9FFEF8333E29699BF0424E6 /* Build configuration list for PBXNativeTarget "StadaMAM" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2BB7A58B7E7FEBDB49F4B5EB /* Debug */,
+				D69B9034FC7D0252012D3317 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		E51881496CD8E3D099029694 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		29C557DD8863EAC78AF32A2B /* StadaMAMCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StadaMAMCore;
+		};
+		70E1C3F211F33C3610A80188 /* StadaMAMMedia */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StadaMAMMedia;
+		};
+		8019241C5F2211616F651EBF /* StadaMAMAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StadaMAMAI;
+		};
+		F499CEBD76FCA9B0CAC50740 /* StadaMAMRemote */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = StadaMAMRemote;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = D2520010B272AA972EB837D1 /* Project object */;
+}

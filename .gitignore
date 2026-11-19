@@ -8,3 +8,9 @@ xcuserdata/
 # Blackmagic RAW SDK is licensed separately and must not be committed
 Vendor/BlackmagicRAW/
 App/Info.plist
+
+# Local build output and packaged apps
+build/
+build-*/
+build.log
+dist/

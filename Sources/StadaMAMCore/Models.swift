@@ -29,6 +29,8 @@ public struct Asset: Codable, Identifiable, Hashable, Sendable, FetchableRecord,
     public var fileSize: Int64
     /// Security-scoped bookmark so the source can be found again after it moves or the volume remounts.
     public var bookmark: Data?
+    /// Content fingerprint used to find the file again after it moves. See `SourceFingerprint`.
+    public var fingerprint: String?
     public var decodePath: DecodePath
     public var container: String?
     public var videoCodec: String?
@@ -90,6 +92,16 @@ public struct Asset: Codable, Identifiable, Hashable, Sendable, FetchableRecord,
         self.importedAt = importedAt
         self.rating = rating
         self.notes = notes
+    }
+
+    /// The same clip at a new location.
+    public func relocated(to path: String) -> Asset {
+        var copy = self
+        copy.sourcePath = path
+        copy.fileName = (path as NSString).lastPathComponent
+        let parts = path.split(separator: "/")
+        copy.volumeName = parts.first == "Volumes" && parts.count > 1 ? String(parts[1]) : nil
+        return copy
     }
 
     public var frameRate: FrameRate { FrameRate(frameRateNum, frameRateDen) }
@@ -200,6 +212,16 @@ public enum TagKind: String, Codable, Sendable {
     case label
     /// On-screen text found by OCR.
     case text
+    /// A person, place or organisation named in the speech.
+    case entity
+    /// A kind of sound heard in the clip ("music", "applause", "speech").
+    case sound
+    /// A tag added by an external A.I. hook.
+    case external
+    /// A written description of the clip (from an external hook).
+    case summary
+    /// A slate read from the picture or the dialogue: scene, take, camera roll.
+    case slate
 }
 
 /// A time-ranged piece of machine-generated description.
@@ -212,9 +234,12 @@ public struct SceneTag: Codable, Identifiable, Hashable, Sendable, FetchableReco
     public var confidence: Double
     public var startSeconds: Double
     public var endSeconds: Double
+    /// True for tags a person added or changed. Re-analysing a clip never touches these.
+    public var userEdited: Bool
 
     public init(id: String = newID(), assetID: String, kind: TagKind, label: String,
-                confidence: Double, startSeconds: Double, endSeconds: Double) {
+                confidence: Double, startSeconds: Double, endSeconds: Double, userEdited: Bool = false) {
+        self.userEdited = userEdited
         self.id = id
         self.assetID = assetID
         self.kind = kind
@@ -269,6 +294,10 @@ public struct FaceSighting: Codable, Identifiable, Hashable, Sendable, Fetchable
         embedding.withUnsafeBytes { raw in
             Array(raw.bindMemory(to: Float.self))
         }
+    }
+
+    public static func vector(from data: Data) -> [Float] {
+        data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
     }
 
     public static func data(from vector: [Float]) -> Data {

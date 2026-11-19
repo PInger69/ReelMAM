@@ -45,10 +45,21 @@ public struct EditorClip: Sendable {
 /// Writes clip lists the editing applications import: the clips arrive in a bin / event with
 /// their timecode, reel name, markers and subclips, pointing at the right media.
 public enum EditorExport {
+    /// - Parameter pathMappings: where the editor's computer sees this Mac's storage, when the
+    ///   editor works on another machine (Windows drive letters, Linux mount points).
     public static func document(for clips: [EditorClip], target: EditorTarget, media: EditorMedia,
-                                collectionName: String = "StadaXR A.I. MAM") -> String {
+                                collectionName: String = "StradaXR A.I. MAM",
+                                pathMappings: [PathMapping] = []) -> String {
         // In proxy mode only clips that actually have a proxy can be sent.
-        let usable = media == .proxies ? clips.filter { $0.proxyPath != nil } : clips
+        var usable = media == .proxies ? clips.filter { $0.proxyPath != nil } : clips
+        if !pathMappings.isEmpty {
+            usable = usable.map { clip in
+                var mapped = clip
+                mapped.asset.sourcePath = PathMapping.toEditor(clip.asset.sourcePath, using: pathMappings)
+                mapped.proxyPath = clip.proxyPath.map { PathMapping.toEditor($0, using: pathMappings) }
+                return mapped
+            }
+        }
         switch target {
         case .finalCutPro, .davinciResolve:
             return fcpxml(usable, media: media, collectionName: collectionName)
@@ -63,6 +74,8 @@ public enum EditorExport {
         let encoded = path.split(separator: "/", omittingEmptySubsequences: false)
             .map { $0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0) }
             .joined(separator: "/")
+            // A Windows drive letter is written the way Premiere Pro writes it (Z%3A).
+            .replacingOccurrences(of: ":", with: "%3A")
         return (localhost ? "file://localhost" : "file://") + encoded
     }
 
@@ -73,7 +86,7 @@ public enum EditorExport {
             .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
-    private static func baseName(_ asset: Asset) -> String {
+    static func baseName(_ asset: Asset) -> String {
         (asset.fileName as NSString).deletingPathExtension
     }
 
@@ -183,7 +196,7 @@ public enum EditorExport {
 
     // MARK: Final Cut Pro 7 XML (Premiere Pro)
 
-    private static func rateXML(_ rate: FrameRate) -> String {
+    static func rateXML(_ rate: FrameRate) -> String {
         "<rate><timebase>\(rate.nominal)</timebase><ntsc>\(rate.denominator == 1001 ? "TRUE" : "FALSE")</ntsc></rate>"
     }
 

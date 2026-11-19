@@ -5,6 +5,9 @@ public enum ProxyPreset: String, Codable, CaseIterable, Sendable {
     case proResProxy1080
     case h264_1080
     case h264_720
+    /// For editors working over the internet: HEVC at about 10 Mbps, compressed audio.
+    /// Same name, timecode, reel, frame rate and channel count as every other proxy.
+    case remoteHEVC
 
     public var displayName: String {
         switch self {
@@ -12,8 +15,34 @@ public enum ProxyPreset: String, Codable, CaseIterable, Sendable {
         case .proResProxy1080: return "ProRes Proxy – 1080p"
         case .h264_1080: return "H.264 – 1080p"
         case .h264_720: return "H.264 – 720p"
+        case .remoteHEVC: return "Remote – HEVC 1080p (≈10 Mbps)"
         }
     }
+
+    public var isHEVC: Bool { self == .remoteHEVC }
+
+    /// Proxies that stay small enough to send over the internet: compressed audio, capped bitrate.
+    public var isForRemoteViewing: Bool { self == .remoteHEVC }
+
+    /// Average video bitrate in bits per second for an output raster. The remote preset lands
+    /// at 10 Mbps for 1080p and scales down with pixel count for smaller pictures; never below 3 Mbps.
+    public func videoBitrate(width: Int, height: Int) -> Int {
+        switch self {
+        case .remoteHEVC:
+            let full = 1920.0 * 1080.0
+            return max(3_000_000, min(Self.remoteMaxBitrate, Int(Double(Self.remoteMaxBitrate) * Double(width * height) / full)))
+        default:
+            return height > 720 ? 8_000_000 : 4_000_000
+        }
+    }
+
+    public static let remoteMaxBitrate = 10_000_000
+    /// Hard ceiling for encoders that take one (12 Mbps leaves room for scene changes).
+    public static let remotePeakBitrate = 12_000_000
+    /// Audio bitrate per AAC track: 96 kbps for mono, 160 kbps for stereo.
+    public static func remoteAudioBitrate(channels: Int) -> Int { channels <= 1 ? 96_000 : 160_000 }
+    /// Tracks of up to two channels are compressed; wider single tracks stay uncompressed.
+    public static func remoteCompressesAudio(channelsInTrack: Int) -> Bool { (1...2).contains(channelsInTrack) }
 
     public var isProRes: Bool { self == .proResProxyHalf || self == .proResProxy1080 }
 
@@ -24,6 +53,7 @@ public enum ProxyPreset: String, Codable, CaseIterable, Sendable {
         case .proResProxyHalf: target = source / 2
         case .proResProxy1080, .h264_1080: target = min(source, 1080)
         case .h264_720: target = min(source, 720)
+        case .remoteHEVC: target = min(source, 1080)
         }
         return max(2, target - target % 2)
     }
@@ -52,6 +82,16 @@ public enum ProxyNaming: String, Codable, CaseIterable, Sendable {
     }
 
     public static let suffix = "_Proxy"
+
+    /// Where a proxy of `preset` goes. The remote preset always lives in its own `Remote` folder
+    /// inside the proxy library, so it never replaces the proxy the editors here use and is
+    /// inside the folder the remote server serves whatever the naming.
+    public func proxyPath(for asset: Asset, root: String, preset: ProxyPreset) -> String {
+        guard preset.isForRemoteViewing else { return proxyPath(for: asset, root: root) }
+        return ProxyNaming.sameName.proxyPath(for: asset, root: (root as NSString).appendingPathComponent(Self.remoteFolderName))
+    }
+
+    public static let remoteFolderName = "Remote"
 
     public func proxyPath(for asset: Asset, root: String) -> String {
         let source = asset.sourcePath as NSString
@@ -179,6 +219,20 @@ public struct ProxyRenderPlan: Sendable {
                 : ["-c:v", "prores_ks", "-profile:v", "0"]
             if !hardware { args += ["-pix_fmt", "yuv422p10le"] }
             args += ["-c:a", "pcm_s16le"]
+        } else if preset.isHEVC {
+            let rate = preset.videoBitrate(width: outputWidth, height: height)
+            let peak = ProxyPreset.remotePeakBitrate
+            let gop = "\(max(asset.frameRate.nominal / 2, 1))"
+            args += hardware
+                ? ["-c:v", "hevc_videotoolbox", "-b:v", "\(rate)", "-maxrate", "\(peak)", "-allow_sw", "1"]
+                : ["-c:v", "libx265", "-preset", "veryfast", "-b:v", "\(rate)", "-maxrate", "\(peak)",
+                   "-bufsize", "\(peak * 2)", "-x265-params", "bframes=0:keyint=\(gop):min-keyint=\(gop):log-level=error"]
+            if cpuFrames { args += ["-pix_fmt", "yuv420p"] }
+            // hvc1 is the tag QuickTime, Premiere and Resolve read.
+            args += ["-tag:v", "hvc1", "-g", gop]
+            // Every track keeps its channel count, but compressed: PCM would put 16 channels of
+            // location sound at 12 Mbps on its own.
+            args += asset.audioChannels <= 8 ? ["-c:a", "aac", "-b:a", "128k"] : ["-c:a", "pcm_s16le"]
         } else {
             args += hardware
                 ? ["-c:v", "h264_videotoolbox", "-b:v", height > 720 ? "8M" : "4M", "-allow_sw", "1"]

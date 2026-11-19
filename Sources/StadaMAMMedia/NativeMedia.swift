@@ -71,7 +71,9 @@ public enum NativeMedia {
             width: Int(dimensions.width), height: Int(dimensions.height), frameRate: rate,
             durationFrames: duration.isFinite ? rate.frames(forSeconds: duration) : 0,
             startTimecodeFrames: timecode?.frame ?? 0, dropFrame: timecode?.dropFrame ?? false,
-            reelName: timecode?.reelName, audioChannels: channels, formatName: identity.name,
+            reelName: timecode?.reelName, audioChannels: channels,
+            // Colour tags, including Apple's log identifier, which the viewing look is chosen from.
+            colorSpace: ViewingLookRenderer.colorDescription(of: format), formatName: identity.name,
             scan: fieldCount > 1 ? .interlacedTopFirst : .progressive,
             pixelAspect: (max(aspectH, 1), max(aspectV, 1)), capturedAt: created)
 
@@ -176,8 +178,7 @@ public enum NativeMedia {
     }
 
     /// Renders a proxy that is frame-for-frame interchangeable with its source: every source
-    /// frame is decoded and re-encoded once, audio tracks are kept as uncompressed PCM with
-    /// their channel layout, and the source's timecode, reel name and catalog ID are written in.
+    /// frame is decoded and re-encoded once, audio tracks keep their channel layout (uncompressed PCM, or AAC for the remote preset), and the source's timecode, reel name and catalog ID are written in.
     public static func renderProxy(_ plan: ProxyRenderPlan,
                                    progress: (@Sendable (Double) -> Void)? = nil) async throws {
         let asset = plan.asset
@@ -206,13 +207,14 @@ public enum NativeMedia {
         reader.add(videoOutput)
 
         var videoSettings: [String: Any] = [
-            AVVideoCodecKey: plan.preset.isProRes ? AVVideoCodecType.proRes422Proxy : AVVideoCodecType.h264,
+            AVVideoCodecKey: plan.preset.isProRes ? AVVideoCodecType.proRes422Proxy
+                : plan.preset.isHEVC ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
             AVVideoWidthKey: plan.outputWidth,
             AVVideoHeightKey: plan.outputHeight,
         ]
         if !plan.preset.isProRes {
             videoSettings[AVVideoCompressionPropertiesKey] = [
-                AVVideoAverageBitRateKey: plan.outputHeight > 720 ? 8_000_000 : 4_000_000,
+                AVVideoAverageBitRateKey: plan.preset.videoBitrate(width: plan.outputWidth, height: plan.outputHeight),
                 // A short GOP without reordering keeps scrubbing responsive in the editing app.
                 AVVideoMaxKeyFrameIntervalKey: max(asset.frameRate.nominal / 2, 1),
                 AVVideoAllowFrameReorderingKey: false,
@@ -236,7 +238,24 @@ public enum NativeMedia {
                 AVLinearPCMIsBigEndianKey: false,
                 AVLinearPCMIsNonInterleaved: false,
             ])
-            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil)
+            // Remote proxies compress mono and stereo tracks to AAC; the channel count never changes.
+            var audioSettings: [String: Any]?
+            if plan.preset.isForRemoteViewing,
+               let description = try await track.load(.formatDescriptions).first,
+               let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee,
+               ProxyPreset.remoteCompressesAudio(channelsInTrack: Int(basic.mChannelsPerFrame)) {
+                let channels = Int(basic.mChannelsPerFrame)
+                var layout = AudioChannelLayout()
+                layout.mChannelLayoutTag = channels == 1 ? kAudioChannelLayoutTag_Mono : kAudioChannelLayoutTag_Stereo
+                audioSettings = [
+                    AVFormatIDKey: kAudioFormatMPEG4AAC,
+                    AVNumberOfChannelsKey: channels,
+                    AVSampleRateKey: 48_000,
+                    AVEncoderBitRateKey: ProxyPreset.remoteAudioBitrate(channels: channels),
+                    AVChannelLayoutKey: Data(bytes: &layout, count: MemoryLayout<AudioChannelLayout>.size),
+                ]
+            }
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
             input.expectsMediaDataInRealTime = false
             guard reader.canAdd(output), writer.canAdd(input) else { continue }
             reader.add(output)

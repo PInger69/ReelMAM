@@ -8,6 +8,7 @@ let package = Package(
         .library(name: "StadaMAMCore", targets: ["StadaMAMCore"]),
         .library(name: "StadaMAMMedia", targets: ["StadaMAMMedia"]),
         .library(name: "StadaMAMAI", targets: ["StadaMAMAI"]),
+        .library(name: "StadaMAMRemote", targets: ["StadaMAMRemote"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
@@ -36,7 +37,18 @@ let package = Package(
             dependencies: ["StadaMAMCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // macOS only (Network.framework): the read-only proxy server editors connect to.
+        .target(
+            name: "StadaMAMRemote",
+            dependencies: [
+                "StadaMAMCore",
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .testTarget(name: "StadaMAMCoreTests", dependencies: ["StadaMAMCore"]),
         .testTarget(name: "StadaMAMMediaTests", dependencies: ["StadaMAMMedia"]),
+        .testTarget(name: "StadaMAMRemoteTests", dependencies: ["StadaMAMRemote"]),
+        .testTarget(name: "StadaMAMAITests", dependencies: ["StadaMAMAI", "StadaMAMMedia"]),
     ]
 )

@@ -32,6 +32,17 @@ public struct FrameRate: Codable, Hashable, Sendable {
         }
     }
 
+    /// Reduces a ratio to its simplest form and snaps near-NTSC values to their exact rate,
+    /// so 2400/100 becomes 24 and 2997/100 becomes 30000/1001. Other rates are kept exactly.
+    public static func normalized(_ numerator: Int, _ denominator: Int) -> FrameRate {
+        guard numerator > 0, denominator > 0 else { return .fps24 }
+        func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
+        let divisor = gcd(numerator, denominator)
+        let reduced = FrameRate(numerator / divisor, denominator / divisor)
+        let snapped = FrameRate(fps: reduced.fps)
+        return abs(snapped.fps - reduced.fps) < 0.0005 ? snapped : reduced
+    }
+
     public static let fps23_976 = FrameRate(24000, 1001)
     public static let fps24 = FrameRate(24)
     public static let fps25 = FrameRate(25)
@@ -46,8 +57,8 @@ public struct FrameRate: Codable, Hashable, Sendable {
     /// The integer timecode base (24 for 23.976, 30 for 29.97, ...).
     public var nominal: Int { Int(fps.rounded()) }
 
-    /// Drop-frame timecode only exists for 29.97 and 59.94.
-    public var supportsDropFrame: Bool { denominator == 1001 && (nominal == 30 || nominal == 60) }
+    /// Drop-frame timecode exists for the NTSC rates that are multiples of 30: 29.97, 59.94, 119.88.
+    public var supportsDropFrame: Bool { denominator == 1001 && nominal % 30 == 0 }
 
     public func seconds(forFrames frames: Int) -> Double {
         Double(frames) * Double(denominator) / Double(numerator)

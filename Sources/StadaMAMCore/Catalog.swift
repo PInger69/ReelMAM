@@ -116,6 +116,25 @@ public final class Catalog: Sendable {
                 )
                 """)
         }
+        migrator.registerMigration("v2-picture-format") { db in
+            try db.alter(table: "asset") { t in
+                t.add(column: "formatName", .text).notNull().defaults(to: "")
+                t.add(column: "scan", .text).notNull().defaults(to: ScanType.unknown.rawValue)
+                t.add(column: "pixelAspectNum", .integer).notNull().defaults(to: 1)
+                t.add(column: "pixelAspectDen", .integer).notNull().defaults(to: 1)
+            }
+        }
+        migrator.registerMigration("v3-proxy-render-stats") { db in
+            try db.alter(table: "proxy") { t in
+                t.add(column: "pipeline", .text)
+                t.add(column: "speed", .double)
+            }
+        }
+        migrator.registerMigration("v4-proxy-verification") { db in
+            try db.alter(table: "proxy") { t in
+                t.add(column: "mismatch", .text)
+            }
+        }
         return migrator
     }
 
@@ -158,6 +177,14 @@ public final class Catalog: Sendable {
 
     public func save(_ proxy: ProxyRecord) throws {
         try db.write { try proxy.save($0) }
+    }
+
+    public func assetIDsWithoutReadyProxy() throws -> Set<String> {
+        try db.read {
+            try String.fetchSet($0, sql: """
+                SELECT id FROM asset WHERE id NOT IN (SELECT assetID FROM proxy WHERE status = ?)
+                """, arguments: [ProxyStatus.ready.rawValue])
+        }
     }
 
     public func proxies(forAsset assetID: String) throws -> [ProxyRecord] {
@@ -250,6 +277,26 @@ public final class Catalog: Sendable {
         try assign(sightingIDs: [], to: person)
     }
 
+    // MARK: Library facets
+
+    public func assetIDsWithReadyProxy() throws -> Set<String> {
+        try db.read {
+            try String.fetchSet($0, sql: "SELECT DISTINCT assetID FROM proxy WHERE status = ?",
+                                arguments: [ProxyStatus.ready.rawValue])
+        }
+    }
+
+    public func assetIDsWithTranscript() throws -> Set<String> {
+        try db.read { try String.fetchSet($0, sql: "SELECT DISTINCT assetID FROM transcriptSegment") }
+    }
+
+    public func assetIDs(forPerson personID: String) throws -> Set<String> {
+        try db.read {
+            try String.fetchSet($0, sql: "SELECT DISTINCT assetID FROM faceSighting WHERE personID = ?",
+                                arguments: [personID])
+        }
+    }
+
     // MARK: Search
 
     /// Full-text search across file names, notes, transcripts, tags, markers and named people.
@@ -280,7 +327,8 @@ public final class Catalog: Sendable {
             try db.execute(sql: "INSERT INTO searchIndex (assetID, kind, time, text) VALUES (?, ?, ?, ?)",
                            arguments: [assetID, kind.rawValue, time, text])
         }
-        try add(.asset, nil, [asset.fileName, asset.reelName ?? "", asset.notes].joined(separator: " "))
+        try add(.asset, nil, [asset.fileName, asset.reelName ?? "", asset.notes, asset.formatName,
+                              asset.pictureFormatName, asset.resolutionClass].joined(separator: " "))
         for segment in try TranscriptSegment.filter(Column("assetID") == assetID).fetchAll(db) {
             try add(.transcript, segment.startSeconds, segment.text)
         }

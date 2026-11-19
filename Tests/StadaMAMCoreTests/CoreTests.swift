@@ -1,6 +1,9 @@
 import Foundation
 import Testing
-@testable import ReelMAMCore
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
+@testable import StadaMAMCore
 
 @Suite struct TimecodeTests {
     @Test func nonDropRoundTrip() {
@@ -88,6 +91,14 @@ private func makeAsset(_ path: String, start: Int = 0, duration: Int = 240, reel
         #expect(hit?.kind == .person)
         #expect(hit?.timeSeconds == 4)
         #expect(try catalog.faces(forAsset: asset.id).first?.vector == [1, 0, 0])
+        let person = try #require(try catalog.people().first)
+        #expect(try catalog.assetIDs(forPerson: person.id) == [asset.id])
+        try catalog.replaceTranscript(assetID: asset.id, with: [
+            TranscriptSegment(assetID: asset.id, startSeconds: 0, endSeconds: 1, text: "hi"),
+        ])
+        try catalog.save(ProxyRecord(assetID: asset.id, path: "/p/A.mov", preset: .h264_720, status: .ready))
+        #expect(try catalog.assetIDsWithTranscript() == [asset.id])
+        #expect(try catalog.assetIDsWithReadyProxy() == [asset.id])
     }
 }
 
@@ -109,13 +120,55 @@ private func makeAsset(_ path: String, start: Int = 0, duration: Int = 240, reel
 
     @Test func ffmpegArgumentsCarryIdentity() {
         let asset = makeAsset("/Volumes/RAID/A001.mov", start: 86400, reel: "A001")
-        let args = ProxyRenderPlan(asset: asset, preset: .h264_720, outputPath: "/tmp/out.mov", hardware: false).ffmpegArguments
+        let args = ProxyRenderPlan(asset: asset, preset: .h264_720, outputPath: "/tmp/out.mov", pipeline: .software).ffmpegArguments
         #expect(args.contains("01:00:00:00"))
         #expect(args.contains("reel_name=A001"))
         #expect(args.contains("-metadata:s:v:0"))
         #expect(args.contains("\(ProxyMetadataKey.assetID)=\(asset.id)"))
         #expect(args.contains("scale=-2:720"))
         #expect(args.last == "/tmp/out.mov")
+    }
+
+    @Test func verifierReportsEveryDifference() {
+        let source = makeAsset("/Volumes/RAID/A001.mov", start: 86400, duration: 240)
+        var proxy = makeAsset("/Proxies/A001.mov", start: 86400, duration: 240)
+        #expect(ProxyVerifier.mismatch(source: source, proxy: proxy) == nil)
+        proxy.durationFrames = 239
+        proxy.startTimecodeFrames = 0
+        proxy.audioChannels = 2
+        #expect(ProxyVerifier.mismatch(source: source, proxy: proxy)
+            == "239 frames instead of 240; start timecode 00:00:00:00 instead of 01:00:00:00; 2 audio channels instead of 0")
+        proxy = makeAsset("/Proxies/A001.mov", start: 86400, duration: 240)
+        proxy.frameRateNum = 24000
+        proxy.frameRateDen = 1001
+        #expect(ProxyVerifier.mismatch(source: source, proxy: proxy) == "frame rate 23.976 instead of 24")
+    }
+
+    @Test func pipelinesBuildTheRightCommand() {
+        var asset = makeAsset("/Volumes/RAID/A001.mov")  // 4096x2160
+        func args(_ pipeline: RenderPipeline, _ preset: ProxyPreset = .proResProxyHalf) -> [String] {
+            ProxyRenderPlan(asset: asset, preset: preset, outputPath: "/tmp/out.mov", pipeline: pipeline).ffmpegArguments
+        }
+        let gpu = args(.videoToolboxGPU)
+        #expect(gpu.contains("videotoolbox_vld"))
+        #expect(gpu.contains("scale_vt=w=2048:h=1080"))
+        #expect(gpu.contains("prores_videotoolbox"))
+        #expect(!gpu.contains("-pix_fmt"))
+        // Hardware decode has to be requested before the input it applies to.
+        #expect(gpu.firstIndex(of: "-hwaccel")! < gpu.firstIndex(of: "-i")!)
+
+        let hybrid = args(.videoToolbox, .h264_1080)
+        #expect(hybrid.contains("-hwaccel") && !hybrid.contains("videotoolbox_vld"))
+        #expect(hybrid.contains("scale=-2:1080") && hybrid.contains("h264_videotoolbox"))
+
+        let software = args(.software)
+        #expect(!software.contains("-hwaccel"))
+        #expect(software.contains("prores_ks"))
+
+        asset.scan = .interlacedTopFirst
+        #expect(!ProxyRenderPlan(asset: asset, preset: .h264_720, outputPath: "/o", pipeline: .videoToolboxGPU).isApplicable)
+        #expect(args(.videoToolbox).contains("bwdif=mode=send_frame,scale=-2:1080"))
+        #expect(ProxyNaming.besideSource.proxyPath(for: asset, root: "/Proxies") == "/Volumes/RAID/Proxy/A001.mov")
     }
 }
 
@@ -274,6 +327,81 @@ func found(_ resolution: SourceResolution) -> Found { Found(resolution.asset?.id
     }
 }
 
+@Suite struct FormatTests {
+    @Test func everyATSCFrameRateHasValidTimecode() throws {
+        let rates: [FrameRate] = [.fps23_976, .fps24, .fps25, .fps29_97, .fps30, .fps50, .fps59_94, .fps60,
+                                  FrameRate(100), FrameRate(120000, 1001), FrameRate(120)]
+        for rate in rates {
+            let oneHour = Timecode("01:00:00:00", rate: rate)
+            #expect(oneHour?.frames == rate.nominal * 3600)
+            #expect(oneHour?.description == "01:00:00:00")
+            if rate.supportsDropFrame {
+                // In drop-frame, one hour of timecode is one hour of real time (to the frame).
+                let drop = try #require(Timecode("01:00:00;00", rate: rate))
+                #expect(abs(rate.seconds(forFrames: drop.frames) - 3600) < 0.01)
+                #expect(drop.description == "01:00:00;00")
+            }
+        }
+        let dropCapable = rates.filter(\.supportsDropFrame)
+        #expect(dropCapable == [.fps29_97, .fps59_94, FrameRate(120000, 1001)])
+        #expect(FrameRate(fps: 119.88) == FrameRate(120000, 1001))
+        #expect(FrameRate.normalized(2400, 100) == .fps24)
+        #expect(FrameRate.normalized(2997, 100) == .fps29_97)
+        #expect(FrameRate.normalized(24000, 1001) == .fps23_976)
+        #expect(FrameRate.normalized(25, 2) == FrameRate(25, 2))
+    }
+
+    @Test func atsc1TableIsComplete() {
+        func atsc1(_ w: Int, _ h: Int, _ rate: FrameRate, _ scan: ScanType = .progressive) -> Bool {
+            PictureFormat.broadcastStandards(width: w, height: h, frameRate: rate, scan: scan).contains(.atsc1)
+        }
+        let film: [FrameRate] = [.fps23_976, .fps24, .fps29_97, .fps30]
+        let fast: [FrameRate] = [.fps59_94, .fps60]
+        // The rates each raster carries, exactly as in A/53 Table 6.2.
+        let all = film + fast
+        #expect(all.filter { atsc1(1920, 1080, $0) } == film)
+        #expect(all.filter { atsc1(1920, 1080, $0, .interlacedTopFirst) } == [.fps29_97, .fps30])
+        #expect(all.filter { atsc1(1280, 720, $0) } == all)
+        #expect(all.filter { atsc1(704, 480, $0) } == all)
+        #expect(all.filter { atsc1(640, 480, $0) } == all)
+        #expect(all.filter { atsc1(704, 480, $0, .interlacedBottomFirst) } == [.fps29_97, .fps30])
+        #expect(!atsc1(3840, 2160, .fps24))
+        #expect(!atsc1(1920, 1080, .fps25))
+    }
+
+    @Test func namesAndClassesHaveNoCeiling() {
+        #expect(PictureFormat.name(height: 2160, frameRate: .fps23_976, scan: .progressive) == "2160p23.976")
+        #expect(PictureFormat.name(height: 1080, frameRate: .fps29_97, scan: .interlacedTopFirst) == "1080i59.94")
+        #expect(PictureFormat.name(height: 1080, frameRate: .fps25, scan: .interlacedTopFirst) == "1080i50")
+        #expect(PictureFormat.name(height: 4320, frameRate: FrameRate(120000, 1001), scan: .progressive) == "4320p119.88")
+        let classes = [(720, 480, "SD"), (1280, 720, "HD"), (1920, 1080, "HD"), (2048, 1080, "2K"),
+                       (3840, 2160, "UHD 4K"), (4096, 2160, "DCI 4K"), (4608, 3164, "4.6K"), (5952, 3968, "6K"),
+                       (6144, 3456, "6K"), (7680, 4320, "UHD 8K"), (8192, 4320, "DCI 8K"), (8640, 5760, "8.6K"),
+                       (12288, 6480, "12K"), (17280, 8640, "17K"), (4480, 3096, "4.5K"), (3424, 2202, "3.4K")]
+        for (w, h, expected) in classes {
+            #expect(PictureFormat.resolutionClass(width: w, height: h) == expected)
+        }
+    }
+
+    @Test func identifiesCameraFormats() {
+        func id(_ ext: String, _ codec: String? = nil, tag: String? = nil, vendor: String? = nil) -> FormatIdentity {
+            FormatIdentity.identify(fileExtension: ext, codec: codec, codecTag: tag, canDecode: codec != nil, vendor: vendor)
+        }
+        #expect(id("mxf", vendor: "Sony MPC-3628") == FormatIdentity(name: "Sony X-OCN / RAW", decodePath: .unsupported))
+        // Sony 8K recorded as XAVC is ordinary HEVC / H.264 and decodes normally.
+        #expect(id("mxf", "h264", vendor: "Sony") == FormatIdentity(name: "H.264 / AVC", decodePath: .ffmpeg))
+        #expect(id("mp4", "hevc", vendor: "Sony") == FormatIdentity(name: "H.265 / HEVC", decodePath: .avFoundation))
+        #expect(id("mxf", vendor: "ARRI") == FormatIdentity(name: "ARRIRAW (MXF)", decodePath: .unsupported))
+        #expect(id("braw").decodePath == .blackmagicRAW)
+        #expect(id("R3D").name == "REDCODE RAW")
+        #expect(id("crm").name == "Canon Cinema RAW Light")
+        #expect(id("mov", "prores", tag: "apch") == FormatIdentity(name: "Apple ProRes 422 HQ", decodePath: .avFoundation))
+        #expect(id("mov", tag: "aprn") == FormatIdentity(name: "Apple ProRes RAW", decodePath: .avFoundation))
+        #expect(id("mxf", "dnxhd") == FormatIdentity(name: "Avid DNxHD / DNxHR", decodePath: .ffmpeg))
+        #expect(id("mov", "somethingnew").decodePath == .ffmpeg)
+    }
+}
+
 @Suite struct FFProbeTests {
     @Test func buildsAssetFromProbeJSON() throws {
         let json = """
@@ -283,7 +411,7 @@ func found(_ resolution: SourceResolution) -> Found { Found(resolution.asset?.id
               {"codec_type":"audio","codec_name":"pcm_s24le","channels":2},
               {"codec_type":"data","tags":{"timecode":"01:00:00;00"}}],
              "format":{"format_name":"mov,mp4","duration":"10.01","size":"123456",
-              "tags":{"com.reelmam.asset-id":"ABC","creation_time":"2026-03-01T10:00:00.000000Z"}}}
+              "tags":{"com.stadaxr.mam.asset-id":"ABC","creation_time":"2026-03-01T10:00:00.000000Z"}}}
             """
         let probe = try FFProbeResult(json: Data(json.utf8))
         let asset = try #require(probe.asset(path: "/Volumes/RAID/clip.mov"))
@@ -294,5 +422,88 @@ func found(_ resolution: SourceResolution) -> Found { Found(resolution.asset?.id
         #expect(asset.audioChannels == 2)
         #expect(asset.capturedAt != nil)
         #expect(probe.embeddedAssetID == "ABC")
+    }
+}
+
+@Suite struct EditorExportTests {
+    private func clips() -> [EditorClip] {
+        var a = makeAsset("/Volumes/RAID/Day 1/A001_C003.mov", start: 86400, duration: 240, reel: "A001")
+        a.width = 3840
+        a.audioChannels = 2
+        let b = makeAsset("/Volumes/RAID/Day 1/B002 & C001.braw", start: 0, duration: 120)
+        return [
+            EditorClip(asset: a, proxyPath: "/Proxies/RAID/Day 1/A001_C003.mov", markers: [
+                Marker(assetID: a.id, inFrame: 24, name: "Smile <best>", note: "use this"),
+                Marker(assetID: a.id, inFrame: 48, outFrame: 95, name: "Answer 1"),
+            ]),
+            EditorClip(asset: b),
+        ]
+    }
+
+    private func isWellFormed(_ xml: String) -> Bool {
+        XMLParser(data: Data(xml.utf8)).parse()
+    }
+
+    @Test func finalCutDocumentLinksOriginalAndProxy() throws {
+        let xml = EditorExport.document(for: clips(), target: .finalCutPro, media: .sources)
+        #expect(isWellFormed(xml))
+        #expect(xml.contains("<fcpxml version=\"1.9\">"))
+        #expect(xml.contains("name=\"FFVideoFormat3840x2160p24\" frameDuration=\"1/24s\" width=\"3840\" height=\"2160\""))
+        #expect(xml.contains("kind=\"original-media\" src=\"file:///Volumes/RAID/Day%201/A001_C003.mov\""))
+        #expect(xml.contains("kind=\"proxy-media\" src=\"file:///Proxies/RAID/Day%201/A001_C003.mov\""))
+        // Start is the source timecode (01:00:00:00 at 24 fps), so the clip keeps its timecode.
+        #expect(xml.contains("start=\"86400/24s\" duration=\"240/24s\""))
+        #expect(xml.contains("<marker start=\"86424/24s\" duration=\"1/24s\" value=\"Smile &lt;best&gt;\" note=\"use this\"/>"))
+        #expect(xml.contains("<keyword start=\"86448/24s\" duration=\"48/24s\" value=\"Answer 1\"/>"))
+        #expect(xml.contains("B002%20&amp;%20C001.braw"))
+        // Our own reader sees the originals, not the proxies.
+        let doc = try #require(TimelineDocument(text: xml))
+        #expect(doc.references.map(\.path) == ["/Volumes/RAID/Day 1/A001_C003.mov", "/Volumes/RAID/Day 1/B002 & C001.braw"])
+    }
+
+    @Test func fractionalRatesStayExact() {
+        var asset = makeAsset("/Volumes/RAID/A.mov", start: 86400, duration: 24)
+        asset.frameRateNum = 24000
+        asset.frameRateDen = 1001
+        #expect(EditorExport.time(86400, asset.frameRate) == "86486400/24000s")
+        let xml = EditorExport.document(for: [EditorClip(asset: asset)], target: .davinciResolve, media: .sources)
+        #expect(xml.contains("frameDuration=\"1001/24000s\""))
+        #expect(xml.contains("tcFormat=\"NDF\""))
+    }
+
+    @Test func premiereDocumentCarriesTimecodeMarkersAndSubclips() throws {
+        let xml = EditorExport.document(for: clips(), target: .premierePro, media: .sources)
+        #expect(isWellFormed(xml))
+        #expect(xml.contains("<pathurl>file://localhost/Volumes/RAID/Day%201/A001_C003.mov</pathurl>"))
+        #expect(xml.contains("<string>01:00:00:00</string><frame>86400</frame><displayformat>NDF</displayformat><reel><name>A001</name></reel>"))
+        #expect(xml.contains("<timebase>24</timebase><ntsc>FALSE</ntsc>"))
+        #expect(xml.contains("<marker><name>Smile &lt;best&gt;</name><comment>use this</comment><in>24</in><out>-1</out></marker>"))
+        #expect(xml.contains("<name>Answer 1</name>"))
+        #expect(xml.contains("<in>48</in><out>96</out>"))
+        #expect(xml.contains("<file id=\"file-1\"/>"))
+        let doc = try #require(TimelineDocument(text: xml))
+        #expect(doc.format == .xmeml)
+        #expect(doc.references.count == 2)
+    }
+
+    @Test func proxyOnlyHandoverComesBackToSources() throws {
+        let catalog = try Catalog.inMemory()
+        let source = try catalog.save(makeAsset("/Volumes/RAID/Day 1/A001_C003.mov", start: 86400))
+        try catalog.save(ProxyRecord(assetID: source.id, path: "/Proxies/A001_C003.mov", preset: .h264_720, status: .ready))
+        let noProxy = try catalog.save(makeAsset("/Volumes/RAID/Day 1/Z009.mov"))
+        let clips = [EditorClip(asset: source, proxyPath: "/Proxies/A001_C003.mov"), EditorClip(asset: noProxy)]
+        let resolver = SourceResolver(catalog: catalog)
+
+        for target in EditorTarget.allCases {
+            let handed = EditorExport.document(for: clips, target: target, media: .proxies)
+            // Clips without a proxy are left out, and nothing points at a source.
+            #expect(!handed.contains("Z009"))
+            #expect(!handed.contains("/Volumes/RAID"))
+            let doc = try #require(TimelineDocument(text: handed))
+            #expect(doc.references.map(\.path) == ["/Proxies/A001_C003.mov"])
+            let back = doc.relinked { try? resolver.resolve($0.clue).asset }
+            #expect(back.contains("/Volumes/RAID/Day%201/A001_C003.mov"))
+            #expect(!back.contains("/Proxies/"))
+        }
     }
 }

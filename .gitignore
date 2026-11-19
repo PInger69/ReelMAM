@@ -7,3 +7,4 @@ xcuserdata/
 *.xcuserstate
 # Blackmagic RAW SDK is licensed separately and must not be committed
 Vendor/BlackmagicRAW/
+App/Info.plist

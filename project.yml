@@ -1,0 +1,44 @@
+# Generates StadaMAM.xcodeproj. Run `xcodegen generate` (brew install xcodegen), then open it.
+name: StadaMAM
+options:
+  bundleIdPrefix: com.stadaxr.mam
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+packages:
+  StadaMAMKit:
+    path: .
+targets:
+  StadaMAM:
+    type: application
+    platform: macOS
+    sources:
+      - App
+    dependencies:
+      - package: StadaMAMKit
+        product: StadaMAMCore
+      - package: StadaMAMKit
+        product: StadaMAMMedia
+      - package: StadaMAMKit
+        product: StadaMAMAI
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: StadaXR A.I. MAM
+        CFBundleName: StadaXR A.I. MAM
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        LSApplicationCategoryType: public.app-category.video
+        NSSpeechRecognitionUsageDescription: StadaXR A.I. MAM transcribes the speech in your clips so you can search and caption them.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.stadaxr.mam
+        SWIFT_VERSION: "5.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        # Not sandboxed: the app reads media on any volume and runs FFmpeg.
+        ENABLE_APP_SANDBOX: NO
+        CODE_SIGN_STYLE: Automatic
+        # Apple Silicon only.
+        ARCHS: arm64
+        EXCLUDED_ARCHS: x86_64

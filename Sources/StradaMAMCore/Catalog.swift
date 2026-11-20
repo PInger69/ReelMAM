@@ -19,6 +19,9 @@ public final class Catalog: Sendable {
         var configuration = Configuration()
         // A catalogue of a whole feature's footage is large and written to while it is read:
         // write-ahead logging keeps the interface responsive during imports and analysis.
+        // The MAM app, the ingest app and the ingest client can all have one library open at
+        // once: a writer waits for another to finish rather than failing with "database is locked".
+        configuration.busyMode = .timeout(15)
         configuration.prepareDatabase { db in
             try db.execute(sql: """
                 PRAGMA journal_mode = WAL;

@@ -1,7 +1,7 @@
 # Cuts editor, export for a full editor, and the Rec.709 look
 
 Status as of 19 November 2026. This covers the Mac app. The browser app for remote editors is not
-changed; the sequence model and the exports are in `StadaMAMCore` so it can use them later.
+changed; the sequence model and the exports are in `StradaMAMCore` so it can use them later.
 
 "Start the Cuts editor in APP" was read as **the Mac app first**. If the browser app was meant,
 the model, layout and exports below are the part that carries over; the editor screen would be new.
@@ -10,12 +10,12 @@ the model, layout and exports below are the part that carries over; the editor s
 
 | Part | Where | State |
 | --- | --- | --- |
-| Sequences in the catalogue: create, rename, duplicate, delete; cuts: add, insert, reorder, trim, remove | `Sources/StadaMAMCore/Sequence.swift`, migration `v8-sequences-and-looks` in `Catalog.swift` | Built, tested |
-| Timeline export: FCPXML, Premiere XML, CMX 3600 EDL | `Sources/StadaMAMCore/EditorExport+Sequence.swift` | Built; structure and timecode tested; **not imported into Final Cut Pro, Resolve or Premiere** |
-| Package export: timelines, originals copied whole, manifest, every copy checked | `Sources/StadaMAMCore/SequencePackage.swift`, `Sources/StadaMAMMedia/SequencePackageExporter.swift` | Built, tested on stand-in files; **not run on camera originals or a real external disk** |
-| Playing a sequence from proxies | `Sources/StadaMAMMedia/SequencePlayback.swift` | Built, tested on FFmpeg-made clips (decoded frames checked) |
-| Rec.709 viewing look, `.cube` LUTs | `Sources/StadaMAMCore/ViewingLook.swift`, `Sources/StadaMAMMedia/ViewingLookRenderer.swift` | Built, tested on FFmpeg-made clips (decoded frames checked); **not seen on real Apple Log footage** |
-| The editor in the Mac app | `App/CutsEditor.swift`, `App/Views/SequenceEditorView.swift`, edits to `ContentView.swift`, `ClipDetailView.swift`, `PlayerController.swift`, `StadaMAMApp.swift` | **Compiles; not seen running** (see the end) |
+| Sequences in the catalogue: create, rename, duplicate, delete; cuts: add, insert, reorder, trim, remove | `Sources/StradaMAMCore/Sequence.swift`, migration `v8-sequences-and-looks` in `Catalog.swift` | Built, tested |
+| Timeline export: FCPXML, Premiere XML, CMX 3600 EDL | `Sources/StradaMAMCore/EditorExport+Sequence.swift` | Built; structure and timecode tested; **not imported into Final Cut Pro, Resolve or Premiere** |
+| Package export: timelines, originals copied whole, manifest, every copy checked | `Sources/StradaMAMCore/SequencePackage.swift`, `Sources/StradaMAMMedia/SequencePackageExporter.swift` | Built, tested on stand-in files; **not run on camera originals or a real external disk** |
+| Playing a sequence from proxies | `Sources/StradaMAMMedia/SequencePlayback.swift` | Built, tested on FFmpeg-made clips (decoded frames checked) |
+| Rec.709 viewing look, `.cube` LUTs | `Sources/StradaMAMCore/ViewingLook.swift`, `Sources/StradaMAMMedia/ViewingLookRenderer.swift` | Built, tested on FFmpeg-made clips (decoded frames checked); **not seen on real Apple Log footage** |
+| The editor in the Mac app | `App/CutsEditor.swift`, `App/Views/SequenceEditorView.swift`, edits to `ContentView.swift`, `ClipDetailView.swift`, `PlayerController.swift`, `StradaMAMApp.swift` | **Compiles; not seen running** (see the end) |
 
 ## How it works in the app
 
@@ -75,7 +75,7 @@ The ordinary clip view keeps its marks: I and O, then E or the button beside the
 still add a marked range to the open sequence, for people who work that way.
 
 The rules above (the half-second press, the padding around words, the limits on an edge, plain
-lengths, undo) are in `Sources/StadaMAMCore/CutGestures.swift`, with tests, so the browser version can
+lengths, undo) are in `Sources/StradaMAMCore/CutGestures.swift`, with tests, so the browser version can
 follow the same ones.
 
 Cuts only: no transitions, no effects, no audio mixing. Each clip's own sound plays with its picture.

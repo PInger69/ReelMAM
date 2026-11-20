@@ -1,8 +1,8 @@
 import AppKit
 import Observation
-import StadaMAMAI
-import StadaMAMCore
-import StadaMAMMedia
+import StradaMAMAI
+import StradaMAMCore
+import StradaMAMMedia
 
 enum LibraryFilter: Hashable {
     case all
@@ -157,9 +157,9 @@ final class AppModel {
 
     init() {
         let fm = FileManager.default
-        let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("StadaXR MAM")
-        let storage = fm.urls(for: .moviesDirectory, in: .userDomainMask)[0].appendingPathComponent("StadaXR MAM")
+        Self.carryOverSettings()
+        let support = AppNames.libraryFolder(in: fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
+        let storage = AppNames.libraryFolder(in: fm.urls(for: .moviesDirectory, in: .userDomainMask)[0])
         try? fm.createDirectory(at: support, withIntermediateDirectories: true)
         try? fm.createDirectory(at: storage, withIntermediateDirectories: true)
 
@@ -215,7 +215,7 @@ final class AppModel {
             Task { @MainActor in self?.volumesChanged() }
         }
         // Demonstration launch: import a folder straight away and open the first clip.
-        if let demoMedia = ProcessInfo.processInfo.environment["STADAMAM_DEMO_MEDIA"] {
+        if let demoMedia = ProcessInfo.processInfo.environment["STRADAMAM_DEMO_MEDIA"] {
             opensFirstClip = true
             importMedia(at: [demoMedia])
             // Fit the window to the screen so the whole interface is visible in a screenshot.
@@ -227,6 +227,19 @@ final class AppModel {
     }
 
     private var opensFirstClip = false
+
+    /// The app's identifier changed with the spelling correction, and macOS keeps settings per
+    /// identifier. On the first launch under the new one, settings saved under the old are copied.
+    private static func carryOverSettings() {
+        let defaults = UserDefaults.standard
+        let marker = "settingsCarriedOverFromLegacyIdentifier"
+        guard !defaults.bool(forKey: marker) else { return }
+        defaults.set(true, forKey: marker)
+        guard let old = defaults.persistentDomain(forName: AppNames.legacyBundleIdentifier) else { return }
+        for (key, value) in old where defaults.object(forKey: key) == nil {
+            defaults.set(value, forKey: key)
+        }
+    }
 
     // MARK: Derived state
 

@@ -1,6 +1,6 @@
 import Dispatch
 import Foundation
-import StadaMAMMedia
+import StradaMAMMedia
 
 // The ingest client's command line. All the work is in `IngestClient`; this file reads the
 // arguments, keeps the process alive while watching, and stops cleanly on Control-C.

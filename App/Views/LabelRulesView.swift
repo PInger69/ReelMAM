@@ -1,5 +1,5 @@
 import AppKit
-import StadaMAMCore
+import StradaMAMCore
 import SwiftUI
 
 /// Where a person shapes what the picture A.I. says: how sure it must be, which labels to drop,

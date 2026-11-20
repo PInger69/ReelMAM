@@ -1,5 +1,5 @@
-import StadaMAMCore
-import StadaMAMMedia
+import StradaMAMCore
+import StradaMAMMedia
 import SwiftUI
 
 /// Settings › Watch Folders: the folders that feed the library by themselves, and what is being

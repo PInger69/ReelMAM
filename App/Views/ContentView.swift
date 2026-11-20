@@ -1,5 +1,5 @@
 import AppKit
-import StadaMAMCore
+import StradaMAMCore
 import SwiftUI
 
 struct ContentView: View {

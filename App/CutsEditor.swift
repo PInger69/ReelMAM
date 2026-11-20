@@ -1,8 +1,8 @@
 import AppKit
 import CoreMedia
 import Observation
-import StadaMAMCore
-import StadaMAMMedia
+import StradaMAMCore
+import StradaMAMMedia
 import UniformTypeIdentifiers
 
 /// The cuts editor: the list of sequences, the one that is open, and the viewing look. Sequences

@@ -1,9 +1,9 @@
 import AppKit
 import Foundation
 import Observation
-import StadaMAMCore
-import StadaMAMMedia
-import StadaMAMRemote
+import StradaMAMCore
+import StradaMAMMedia
+import StradaMAMRemote
 
 /// Drives the Remote Sharing tab: whether the proxy server is on, the editors who may connect,
 /// and the audit trail. Lives for the whole run of the app, so sharing carries on with the
@@ -101,8 +101,9 @@ final class RemoteSharingModel {
             return
         }
         do {
-            let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("StadaXR MAM/Remote")
+            let support = AppNames.libraryFolder(
+                in: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
+                .appendingPathComponent("Remote")
             let renderer = WatermarkRenderer(tools: tools, cacheRoot: support.appendingPathComponent("Marked Copies").path)
             hub = try RemoteHub(directory: support.path, catalog: model.catalog, watermarker: renderer)
             unavailableReason = nil

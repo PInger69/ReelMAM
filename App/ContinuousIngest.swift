@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 import Observation
 import ServiceManagement
-import StadaMAMCore
-import StadaMAMMedia
+import StradaMAMCore
+import StradaMAMMedia
 
 /// Drives the Watch Folders tab. Lives for the whole run of the app, so folders are watched and
 /// proxies are made with every window closed. All decisions are made by `IngestEngine`.
@@ -60,8 +60,8 @@ final class ContinuousIngestModel {
         appModel = model
         libraryBox.set(library)
         let box = libraryBox
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("StadaXR MAM")
+        let support = AppNames.libraryFolder(
+            in: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
         let worker = LibraryIngestWorker(
             libraryProvider: { box.get() }, limiter: model.renderLimiter,
             presets: { Self.wantedPresets() },

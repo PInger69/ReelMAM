@@ -123,10 +123,10 @@ when the client adds clips while it is open.
 
 ## Layout
 
-- `Sources/StadaMAMCore` — platform-independent model, catalog, timecode, proxy planning,
+- `Sources/StradaMAMCore` — platform-independent model, catalog, timecode, proxy planning,
   relink and analysis post-processing.
-- `Sources/StadaMAMMedia` — ingest, proxy rendering, thumbnails and source recall via FFmpeg.
-- `Sources/StadaMAMAI` — macOS-only Vision and Speech analysis.
+- `Sources/StradaMAMMedia` — ingest, proxy rendering, thumbnails and source recall via FFmpeg.
+- `Sources/StradaMAMAI` — macOS-only Vision and Speech analysis.
 - `App` — the SwiftUI macOS app.
 - `Tests` — unit tests plus end-to-end tests that run real FFmpeg.
 
@@ -134,11 +134,11 @@ when the client adds clips while it is open.
 
 Every build on GitHub packages the app. On the repository's **Actions** tab, open the latest
 successful run and download the **StradaXR-AI-MAM** artifact. Unzip it twice to get
-`StradaXR AI MAM.app`, move it to Applications, then clear the download quarantine once, because the
+`StradaXR A.I. MAM.app`, move it to Applications, then clear the download quarantine once, because the
 build is not signed with an Apple Developer ID:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/StradaXR AI MAM.app"
+xattr -dr com.apple.quarantine "/Applications/StradaXR A.I. MAM.app"
 ```
 
 ## Building
@@ -146,12 +146,12 @@ xattr -dr com.apple.quarantine "/Applications/StradaXR AI MAM.app"
 Requires an Apple Silicon Mac with macOS 14+ and Xcode 16+.
 
 The Xcode project is in the repository, so there is nothing to generate: open
-`StradaXR AI MAM.xcodeproj` and press Run. Two schemes are offered: **StradaXR AI MAM** (the app) and
+`StradaXR A.I. MAM.xcodeproj` and press Run. Two schemes are offered: **StradaXR A.I. MAM** (the app) and
 **stradaxr-ingest** (the ingest client).
 
 To start from nothing in Xcode: on its welcome window choose **Clone Git Repository…**, paste
 `https://github.com/PInger69/ReelMAM.git`, sign in to GitHub when asked, then open
-`StradaXR AI MAM.xcodeproj` in the folder it clones.
+`StradaXR A.I. MAM.xcodeproj` in the folder it clones.
 
 The project file is generated from `project.yml`, and the build on GitHub regenerates and
 commits it on `main` whenever it changes. After editing `project.yml` yourself, or adding a
@@ -174,8 +174,10 @@ Run the tests (the media tests skip themselves when FFmpeg is not installed):
 swift test
 ```
 
-The catalog lives in `~/Library/Application Support/StadaXR MAM`; proxies and thumbnails in
-`~/Movies/StadaXR MAM`.
+The catalog lives in `~/Library/Application Support/StradaXR MAM`; proxies and thumbnails in
+`~/Movies/StradaXR MAM`.
+A library created before the spelling was corrected, in folders named `StadaXR MAM`, keeps
+being used where it is.
 
 ## Known gaps
 

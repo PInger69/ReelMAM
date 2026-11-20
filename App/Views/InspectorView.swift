@@ -1,4 +1,4 @@
-import StadaMAMCore
+import StradaMAMCore
 import SwiftUI
 
 enum InspectorTab: String, CaseIterable, Identifiable {

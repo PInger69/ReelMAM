@@ -2,13 +2,13 @@
 import PackageDescription
 
 let package = Package(
-    name: "StadaMAM",
+    name: "StradaMAM",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "StadaMAMCore", targets: ["StadaMAMCore"]),
-        .library(name: "StadaMAMMedia", targets: ["StadaMAMMedia"]),
-        .library(name: "StadaMAMAI", targets: ["StadaMAMAI"]),
-        .library(name: "StadaMAMRemote", targets: ["StadaMAMRemote"]),
+        .library(name: "StradaMAMCore", targets: ["StradaMAMCore"]),
+        .library(name: "StradaMAMMedia", targets: ["StradaMAMMedia"]),
+        .library(name: "StradaMAMAI", targets: ["StradaMAMAI"]),
+        .library(name: "StradaMAMRemote", targets: ["StradaMAMRemote"]),
         .executable(name: "stradaxr-ingest", targets: ["stradaxr-ingest"]),
     ],
     dependencies: [
@@ -18,7 +18,7 @@ let package = Package(
         // Platform-independent: catalog, timecode, proxy planning, relink logic.
         // Builds and is tested on Linux as well as macOS.
         .target(
-            name: "StadaMAMCore",
+            name: "StradaMAMCore",
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .target(name: "CSQLiteLinuxShim", condition: .when(platforms: [.linux])),
@@ -28,21 +28,21 @@ let package = Package(
         .target(name: "CSQLiteLinuxShim"),
         // Ingest, proxy rendering, thumbnails and source recall, driven through FFmpeg.
         .target(
-            name: "StadaMAMMedia",
-            dependencies: ["StadaMAMCore"],
+            name: "StradaMAMMedia",
+            dependencies: ["StradaMAMCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         // macOS only (Vision / Speech): transcription, faces, scene and text recognition.
         .target(
-            name: "StadaMAMAI",
-            dependencies: ["StadaMAMCore"],
+            name: "StradaMAMAI",
+            dependencies: ["StradaMAMCore"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         // macOS only (Network.framework): the read-only proxy server editors connect to.
         .target(
-            name: "StadaMAMRemote",
+            name: "StradaMAMRemote",
             dependencies: [
-                "StadaMAMCore",
+                "StradaMAMCore",
                 .product(name: "GRDB", package: "GRDB.swift"),
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
@@ -50,12 +50,12 @@ let package = Package(
         // The headless ingest client: watches folders, catalogues clips and renders proxies.
         .executableTarget(
             name: "stradaxr-ingest",
-            dependencies: ["StadaMAMMedia"],
+            dependencies: ["StradaMAMMedia"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
-        .testTarget(name: "StadaMAMCoreTests", dependencies: ["StadaMAMCore"]),
-        .testTarget(name: "StadaMAMMediaTests", dependencies: ["StadaMAMMedia"]),
-        .testTarget(name: "StadaMAMRemoteTests", dependencies: ["StadaMAMRemote"]),
-        .testTarget(name: "StadaMAMAITests", dependencies: ["StadaMAMAI", "StadaMAMMedia"]),
+        .testTarget(name: "StradaMAMCoreTests", dependencies: ["StradaMAMCore"]),
+        .testTarget(name: "StradaMAMMediaTests", dependencies: ["StradaMAMMedia"]),
+        .testTarget(name: "StradaMAMRemoteTests", dependencies: ["StradaMAMRemote"]),
+        .testTarget(name: "StradaMAMAITests", dependencies: ["StradaMAMAI", "StradaMAMMedia"]),
     ]
 )

@@ -1,7 +1,7 @@
-# Generates "StradaXR AI MAM.xcodeproj". Run `xcodegen generate` (brew install xcodegen), then open it.
-name: StradaXR AI MAM
+# Generates "StradaXR A.I. MAM.xcodeproj". Run `xcodegen generate` (brew install xcodegen), then open it.
+name: StradaXR A.I. MAM
 options:
-  bundleIdPrefix: com.stadaxr.mam
+  bundleIdPrefix: com.stradaxr.mam
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
@@ -9,20 +9,20 @@ packages:
   StradaXRKit:
     path: .
 targets:
-  StradaXR AI MAM:
+  StradaXR A.I. MAM:
     type: application
     platform: macOS
     sources:
       - App
     dependencies:
       - package: StradaXRKit
-        product: StadaMAMCore
+        product: StradaMAMCore
       - package: StradaXRKit
-        product: StadaMAMMedia
+        product: StradaMAMMedia
       - package: StradaXRKit
-        product: StadaMAMAI
+        product: StradaMAMAI
       - package: StradaXRKit
-        product: StadaMAMRemote
+        product: StradaMAMRemote
     info:
       path: App/Info.plist
       properties:
@@ -35,7 +35,7 @@ targets:
         NSSpeechRecognitionUsageDescription: StradaXR A.I. MAM transcribes the speech in your clips so you can search and caption them.
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.stadaxr.mam
+        PRODUCT_BUNDLE_IDENTIFIER: com.stradaxr.mam
         SWIFT_VERSION: "5.0"
         ENABLE_HARDENED_RUNTIME: YES
         # Not sandboxed: the app reads media on any volume and runs FFmpeg.

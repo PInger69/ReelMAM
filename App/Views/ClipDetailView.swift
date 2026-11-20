@@ -1,5 +1,5 @@
 import AVKit
-import StadaMAMCore
+import StradaMAMCore
 import SwiftUI
 
 /// Everything stored about one clip, loaded together so the player and inspector agree.

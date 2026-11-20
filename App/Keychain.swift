@@ -3,9 +3,16 @@ import Security
 
 /// Stores small secrets (external A.I. hook tokens) in the user's keychain.
 enum Keychain {
-    private static let service = "com.stadaxr.mam.hooks"
+    private static let service = "com.stradaxr.mam.hooks"
+
+    /// The service name used before a spelling correction; tokens saved then are still read.
+    private static let legacyService = "com.stadaxr.mam.hooks"
 
     static func token(for hookID: String) -> String? {
+        token(for: hookID, service: service) ?? token(for: hookID, service: legacyService)
+    }
+
+    private static func token(for hookID: String, service: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
             kSecAttrAccount as String: hookID, kSecReturnData as String: true,

@@ -1,5 +1,5 @@
-import StadaMAMCore
-import StadaMAMRemote
+import StradaMAMCore
+import StradaMAMRemote
 import SwiftUI
 
 /// Where the owner lets editors on other computers see the catalogue and pull proxies: who may

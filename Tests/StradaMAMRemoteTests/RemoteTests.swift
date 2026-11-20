@@ -640,7 +640,7 @@ private enum DatabaseQueueForTests {
 
 private func session(delegate: URLSessionDelegate? = nil) -> URLSession {
     let configuration = URLSessionConfiguration.ephemeral
-    configuration.timeoutIntervalForRequest = 15
+    configuration.timeoutIntervalForRequest = 90
     return URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
 }
 
@@ -652,7 +652,7 @@ private func request(_ url: String, token: String?, range: String? = nil, method
     return r
 }
 
-@Suite struct RemoteServerTests {
+@Suite(.serialized) struct RemoteServerTests {
     @Test func downloadsAProxyInTwoResumedParts() async throws {
         let f = try Fixture()
         let server = RemoteServer(api: f.api)

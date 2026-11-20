@@ -68,7 +68,28 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
     func clips(on cameraID: String) async throws -> [Clip] {
         guard let device = devices[cameraID] else { throw ImportError.notConnected(name(of: cameraID)) }
         try await open(device, name: device.name ?? "The camera")
-        let videos = (device.mediaFiles ?? []).compactMap { $0 as? ICCameraFile }.filter(Self.isVideo)
+        // Every file the device lists, from its flat media list and by walking its folders, in
+        // case one of the two leaves files out.
+        var all: [ICCameraFile] = (device.mediaFiles ?? []).compactMap { $0 as? ICCameraFile }
+        var seen = Set(all.map(ObjectIdentifier.init))
+        func walk(_ items: [ICCameraItem]?) {
+            for item in items ?? [] {
+                if let folder = item as? ICCameraFolder {
+                    walk(folder.contents)
+                } else if let file = item as? ICCameraFile, seen.insert(ObjectIdentifier(file)).inserted {
+                    all.append(file)
+                }
+            }
+        }
+        walk(device.contents)
+        let videos = all.filter(Self.isVideo)
+        if videos.isEmpty {
+            // Say exactly what the device gave, so a file that should count as a video can be told apart.
+            let sample = all.prefix(6).map { "\($0.name ?? "?") (\($0.uti ?? "no type"))" }.joined(separator: ", ")
+            throw ImportError.failed("\(device.name ?? "The device") listed \(all.count) file\(all.count == 1 ? "" : "s") and no videos"
+                                     + (sample.isEmpty ? "." : ": " + sample + (all.count > 6 ? ", …" : "") + ".")
+                                     + " Only videos in its Photos library are visible over the cable.")
+        }
         var byName: [String: ICCameraFile] = [:]
         for file in videos { byName[file.name ?? ""] = file }
         files[cameraID] = byName

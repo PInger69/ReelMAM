@@ -286,10 +286,6 @@ final class IngestModel {
                 let cameraID = String(source.id.dropFirst("camera:".count))
                 do {
                     let clips = try await phones.clips(on: cameraID)
-                    if clips.isEmpty {
-                        problems.append("No videos found on \(source.name). Only videos in its Photos library are visible over the cable: "
-                                        + "ones still in iCloud (Optimize iPhone Storage) or kept inside another camera app are not.")
-                    }
                     found += TransferPlanner.deviceItems(source, files: clips.map { (name: $0.name, size: $0.size, date: $0.date) },
                                                          destination: destination, history: opened.history)
                 } catch {

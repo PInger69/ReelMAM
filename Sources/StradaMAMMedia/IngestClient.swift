@@ -230,6 +230,26 @@ public enum IngestClient {
         }
     }
 
+    /// The library these options point at, a worker that imports into it and renders proxies,
+    /// and the history of what has been copied into it.
+    public static func openLibrary(_ options: Options, tools: FFmpegTools? = FFmpegTools.locate())
+        throws -> (library: MediaLibrary, worker: LibraryIngestWorker, history: CopyHistory) {
+        guard let places = locations(for: options) else { throw ClientError.noLibrary }
+        let fm = FileManager.default
+        let folder = (places.catalogPath as NSString).deletingLastPathComponent
+        try fm.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: places.storageRoot, withIntermediateDirectories: true)
+        let catalog = try Catalog(path: places.catalogPath)
+        let library = MediaLibrary(catalog: catalog, tools: tools, storageRoot: places.storageRoot,
+                                   naming: options.naming, pipelines: RenderPipeline.appleSilicon)
+        let presets = options.presets
+        let worker = LibraryIngestWorker(library: library,
+                                         limiter: JobLimiter(limit: options.parallel ?? MediaLibrary.recommendedConcurrentRenders),
+                                         presets: { presets })
+        let history = CopyHistory(url: URL(fileURLWithPath: folder + "/Copy History.json"))
+        return (library, worker, history)
+    }
+
     /// Opens the library and prepares the engine. Nothing is scanned until it is started.
     public static func makeSession(_ options: Options, tools: FFmpegTools? = FFmpegTools.locate(),
                                    log: @escaping @Sendable (String) -> Void,

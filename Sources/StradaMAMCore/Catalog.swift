@@ -35,6 +35,11 @@ public final class Catalog: Sendable {
         try Self.migrator.migrate(db)
     }
 
+    /// Catalogued clips with this content fingerprint, wherever they are.
+    public func assets(withFingerprint fingerprint: String) throws -> [Asset] {
+        try db.read { db in try Asset.filter(Column("fingerprint") == fingerprint).fetchAll(db) }
+    }
+
     private init(queue: DatabaseQueue) throws {
         db = queue
         try Self.migrator.migrate(db)

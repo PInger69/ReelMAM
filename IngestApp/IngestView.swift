@@ -287,6 +287,10 @@ private struct ClipTable: View {
                     .disabled(model.isBusy)
             }
             .width(22)
+            TableColumn("Preview") { item in
+                ClipThumbnail(item: item)
+            }
+            .width(72)
             TableColumn("Name", value: \.relativePath) { item in
                 Label(item.relativePath, systemImage: "film")
                     .lineLimit(1)
@@ -353,6 +357,27 @@ private struct ClipTable: View {
     private func shortened(_ path: String) -> String {
         guard let destination = model.destination, path.hasPrefix(destination + "/") else { return path }
         return String(path.dropFirst(destination.count + 1))
+    }
+}
+
+private struct ClipThumbnail: View {
+    @Environment(IngestModel.self) private var model
+    let item: TransferItem
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 3).fill(Color.black.opacity(0.85))
+            if let image = model.thumbnails.images[item.id] {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: "film").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 64, height: 36)
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+        .onAppear { model.thumbnails.load(item) }
     }
 }
 
@@ -443,8 +468,14 @@ private struct StatusBar: View {
             Text(model.problems.first ?? "\(model.tickedSources.count) of \(model.sources.count) sources ticked.")
                 .foregroundStyle(model.problems.isEmpty ? Color.secondary : Color.red)
         } else {
-            Text("\(model.chosen.count) of \(model.items.count) clips ticked · " + size(model.chosenBytes) + " to copy")
-            if let estimate = model.estimate {
+            if model.destination == nil {
+                Text("\(model.chosen.count) of \(model.items.count) clips ticked · " + size(model.chosenItems.reduce(0) { $0 + $1.size }))
+            } else {
+                Text("\(model.chosen.count) of \(model.items.count) clips ticked · " + size(model.chosenBytes) + " to copy")
+            }
+            if model.destination == nil {
+                EmptyView()
+            } else if let estimate = model.estimate {
                 Text("· " + TransferEstimate.describe(estimate)).foregroundStyle(.secondary)
                     .help("From the connection speed of each source, with every copy read back once to check it. The time is measured once copying starts.")
             } else if model.chosenBytes > 0 {

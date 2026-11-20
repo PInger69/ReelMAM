@@ -52,7 +52,8 @@ final class IngestModel {
     /// Whether the last copy made proxies, so finished clips say what was done to them.
     private(set) var lastRunMadeProxies = false
 
-    let phones = PhoneCameras()
+    let phones: PhoneCameras
+    let thumbnails: Thumbnails
 
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private var runner: TransferRunner?
@@ -61,6 +62,9 @@ final class IngestModel {
     @ObservationIgnored private var phoneLinks: [String: LinkSpeed?] = [:]
 
     init() {
+        let phones = PhoneCameras()
+        self.phones = phones
+        thumbnails = Thumbnails(phones: phones)
         destination = defaults.string(forKey: "destination")
         libraryFolder = defaults.string(forKey: "library")
         if defaults.object(forKey: "makesProxies") != nil { makesProxies = defaults.bool(forKey: "makesProxies") }
@@ -293,6 +297,7 @@ final class IngestModel {
                 }
             }
         }
+        thumbnails.reset()
         items = found
         chosen = Set(found.filter(\.history.isNew).map(\.id))
         listIsStale = false

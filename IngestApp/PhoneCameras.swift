@@ -46,6 +46,7 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
     /// Devices that said they are locked; cleared when they say they are unlocked.
     @ObservationIgnored private var locked: Set<String> = []
     @ObservationIgnored private var files: [String: [String: ICCameraFile]] = [:]
+    @ObservationIgnored private var thumbnailWaiters: [ObjectIdentifier: [(CGImage?) -> Void]] = [:]
 
     override init() {
         super.init()
@@ -73,12 +74,15 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
         // Every file the device lists, from its flat media list and by walking its folders, in
         // case one of the two leaves files out.
         var all: [ICCameraFile] = (device.mediaFiles ?? []).compactMap { $0 as? ICCameraFile }
-        var seen = Set(all.map(ObjectIdentifier.init))
+        // The same file can come back from both, as two different objects: one entry per name and size.
+        func key(_ file: ICCameraFile) -> String { (file.name ?? "").lowercased() + "|" + String(file.fileSize) }
+        var seen: Set<String> = []
+        all = all.filter { seen.insert(key($0)).inserted }
         func walk(_ items: [ICCameraItem]?) {
             for item in items ?? [] {
                 if let folder = item as? ICCameraFolder {
                     walk(folder.contents)
-                } else if let file = item as? ICCameraFile, seen.insert(ObjectIdentifier(file)).inserted {
+                } else if let file = item as? ICCameraFile, seen.insert(key(file)).inserted {
                     all.append(file)
                 }
             }
@@ -129,6 +133,25 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
         }
         try? FileManager.default.removeItem(atPath: partial)
         throw lastError ?? ImportError.failed("\(name) could not be fetched.")
+    }
+
+    /// The thumbnail the device keeps for a clip listed by the last scan, asked for if it has not come yet.
+    func thumbnail(cameraID: String, clip name: String) async -> CGImage? {
+        guard let file = files[cameraID]?[name] else { return nil }
+        if let image = file.thumbnail { return image }
+        let id = ObjectIdentifier(file)
+        return await withCheckedContinuation { (continuation: CheckedContinuation<CGImage?, Never>) in
+            var answered = false
+            let answer: (CGImage?) -> Void = { image in
+                guard !answered else { return }
+                answered = true
+                continuation.resume(returning: image)
+            }
+            let first = thumbnailWaiters[id] == nil
+            thumbnailWaiters[id, default: []].append(answer)
+            if first { file.requestThumbnail() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { answer(nil) }
+        }
     }
 
     private func name(of cameraID: String) -> String {
@@ -253,7 +276,10 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
     }
     func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
     func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
-    func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: Error?) {}
+    func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: Error?) {
+        let waiting = thumbnailWaiters.removeValue(forKey: ObjectIdentifier(item)) ?? []
+        waiting.forEach { $0(thumbnail ?? item.thumbnail) }
+    }
     func cameraDevice(_ camera: ICCameraDevice, didReceiveMetadata metadata: [AnyHashable: Any]?, for item: ICCameraItem, error: Error?) {}
     func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
     func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}

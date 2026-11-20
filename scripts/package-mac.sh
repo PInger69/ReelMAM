@@ -113,9 +113,9 @@ package() {
     # Inside out: anything nested first, then the app, with the hardened runtime Apple requires.
     find "$app/Contents" \( -name "*.dylib" -o -name "*.framework" -o -name "*.bundle" -o -name "*.xpc" \) -prune -print0 2>/dev/null |
       while IFS= read -r -d '' nested; do
-        codesign --force --options runtime --timestamp --sign "$SIGN" "${KEYCHAIN_ARGS[@]}" "$nested"
+        codesign --force --options runtime --timestamp --sign "$SIGN" ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} "$nested"
       done
-    codesign --force --options runtime --timestamp --sign "$SIGN" "${KEYCHAIN_ARGS[@]}" "$app"
+    codesign --force --options runtime --timestamp --sign "$SIGN" ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} "$app"
   else
     # Ad-hoc: runs on Apple Silicon, but macOS asks before opening it the first time.
     codesign --force --deep --sign - "$app"
@@ -128,14 +128,14 @@ package() {
   ln -s /Applications "$stage/Applications"
   hdiutil create -quiet -volname "$scheme" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$dmg"
   rm "$stage/Applications"
-  [ -n "$SIGN" ] && codesign --force --timestamp --sign "$SIGN" "${KEYCHAIN_ARGS[@]}" "$dmg"
+  [ -n "$SIGN" ] && codesign --force --timestamp --sign "$SIGN" ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} "$dmg"
 
   # Installer package: installs the app into /Applications.
   local pkg="$OUT/$file_stem-$VERSION.pkg"
   rm -f "$pkg"
   local pkg_sign=()
-  [ -n "$INSTALLER_SIGN" ] && pkg_sign=(--sign "$INSTALLER_SIGN" "${KEYCHAIN_ARGS[@]}" --timestamp)
-  productbuild --component "$app" /Applications --identifier "$bundle_id.pkg" --version "$VERSION" "${pkg_sign[@]}" "$pkg"
+  [ -n "$INSTALLER_SIGN" ] && pkg_sign=(--sign "$INSTALLER_SIGN" ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} --timestamp)
+  productbuild --component "$app" /Applications --identifier "$bundle_id.pkg" --version "$VERSION" ${pkg_sign[@]+"${pkg_sign[@]}"} "$pkg"
 
   if $notarizing; then
     notarize "$dmg"

@@ -305,9 +305,9 @@ private struct ClipTable: View {
             TableColumn("Date", value: \.sortDate) { item in
                 Text(item.date.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "—")
             }
-            .width(min: 90, ideal: 140)
+            .width(min: 110, ideal: 170)
             TableColumn("Status") { item in
-                StatusCell(item: item, phase: model.phase(of: item))
+                StatusCell(item: item, phase: model.phase(of: item), madeProxies: model.lastRunMadeProxies)
             }
             .width(min: 160, ideal: 240)
             TableColumn("Copies to") { item in
@@ -357,6 +357,7 @@ private struct ClipTable: View {
 private struct StatusCell: View {
     let item: TransferItem
     let phase: TransferRunner.Phase?
+    let madeProxies: Bool
 
     var body: some View {
         switch phase {
@@ -367,13 +368,22 @@ private struct StatusCell: View {
         case .some(.processing(let stage, let fraction)):
             if let fraction { progress(stage, fraction) } else { label(stage, "gearshape", .secondary) }
         case .some(.done(let note)):
-            label(note ?? (item.copiesSomething ? "Copied and checked" : "Done"), "checkmark.circle.fill", .green)
+            label(note ?? doneText, "checkmark.circle.fill", .green)
         case .some(.failed(let reason)):
             label(reason, "xmark.octagon.fill", .red)
         case .some(.waiting):
             label("Waiting", "clock", .secondary)
         case .none:
             history
+        }
+    }
+
+    private var doneText: String {
+        switch (item.copiesSomething, madeProxies) {
+        case (true, true): return "Copied, checked, proxy made"
+        case (true, false): return "Copied and checked"
+        case (false, true): return "Proxy made"
+        case (false, false): return "Added to library"
         }
     }
 

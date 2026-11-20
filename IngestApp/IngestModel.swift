@@ -49,6 +49,8 @@ final class IngestModel {
     private(set) var problems: [String] = []
     private(set) var progress: TransferRunner.Progress?
     private(set) var isStopping = false
+    /// Whether the last copy made proxies, so finished clips say what was done to them.
+    private(set) var lastRunMadeProxies = false
 
     let phones = PhoneCameras()
 
@@ -309,6 +311,7 @@ final class IngestModel {
             return
         }
         let clips = items.filter { chosen.contains($0.id) }
+        lastRunMadeProxies = makesProxies
         stage = .copying
         isStopping = false
         problems = []

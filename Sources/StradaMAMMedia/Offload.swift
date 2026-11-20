@@ -149,7 +149,10 @@ public struct OffloadingIngestWorker: IngestWorker {
                             done += Self.size(of: from) * 2
                             continue
                         }
-                        let checksum = try SequencePackageExporter.copyAndVerify(from: from, to: to) { bytes in
+                        var copier = ResilientCopy()
+                        // Said in the clip's row, so a card that has stopped answering is seen, not guessed at.
+                        copier.stalled = { message in report(message, nil) }
+                        let checksum = try copier.copy(from: from, to: to) { bytes in
                             done += bytes
                             report("Copying", total > 0 ? min(Double(done) / Double(total), 1) : nil)
                         }
@@ -256,6 +259,8 @@ public final class OffloadTally: @unchecked Sendable {
                     walker.skipDescendants()
                     continue
                 }
+                // A copy still being written is not a clip on storage yet.
+                if relative.hasSuffix(ResilientCopy.partialSuffix) { continue }
                 guard walker.fileAttributes?[.type] as? FileAttributeType == .typeRegular,
                       let size = (walker.fileAttributes?[.size] as? NSNumber)?.int64Value, size > 0 else { continue }
                 built[size, default: []].append(folder + "/" + relative)

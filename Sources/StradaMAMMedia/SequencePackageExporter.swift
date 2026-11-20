@@ -155,47 +155,11 @@ public enum SequencePackageExporter {
 
     // MARK: Copying
 
-    private static let chunkSize = 8 << 20
+    static let chunkSize = 8 << 20
 
-    /// Copies a file, then reads the copy back and compares checksums. A copy that does not match
-    /// is deleted. Returns the checksum.
+    /// Copies a file, then reads the copy back and compares checksums. Returns the checksum.
     static func copyAndVerify(from source: String, to destination: String, advanced: (Int64) -> Void) throws -> String {
-        let fm = FileManager.default
-        let name = (source as NSString).lastPathComponent
-        do {
-            try fm.createDirectory(atPath: (destination as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            guard fm.createFile(atPath: destination, contents: nil) else {
-                throw PackageError.cannotWrite("\(name) could not be created on the destination.")
-            }
-            guard let input = FileHandle(forReadingAtPath: source), let output = FileHandle(forWritingAtPath: destination) else {
-                throw PackageError.cannotWrite("\(name) could not be opened.")
-            }
-            defer { try? input.close() }
-            var hasher = Checksum()
-            while true {
-                try Task.checkCancellation()
-                let chunk = try autoreleased { try input.read(upToCount: chunkSize) ?? Data() }
-                if chunk.isEmpty { break }
-                hasher.update(chunk)
-                try output.write(contentsOf: chunk)
-                advanced(Int64(chunk.count))
-            }
-            try output.synchronize()
-            try output.close()
-            let written = hasher.finish()
-            let readBack = try checksum(ofFileAt: destination, advanced: advanced)
-            guard written == readBack else { throw PackageError.copyDoesNotMatch(name) }
-            // Keep the original's dates, which editing apps show and sort by.
-            if let attributes = try? fm.attributesOfItem(atPath: source) {
-                let dates = attributes.filter { $0.key == .modificationDate || $0.key == .creationDate }
-                try? fm.setAttributes(dates, ofItemAtPath: destination)
-            }
-            return written
-        } catch {
-            try? fm.removeItem(atPath: destination)
-            if error is PackageError || error is CancellationError { throw error }
-            throw PackageError.cannotWrite("\(name): \(error.localizedDescription)")
-        }
+        try ResilientCopy().copy(from: source, to: destination, advanced: advanced)
     }
 
     static func checksum(ofFileAt path: String, advanced: (Int64) -> Void = { _ in }) throws -> String {
@@ -224,7 +188,7 @@ public enum SequencePackageExporter {
 }
 
 /// SHA-256 where the system provides it; a 64-bit FNV-1a otherwise.
-private struct Checksum {
+struct Checksum {
     #if canImport(CryptoKit)
     private var sha = SHA256()
     mutating func update(_ data: Data) { sha.update(data: data) }

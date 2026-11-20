@@ -193,10 +193,13 @@ jobs:
           cp demo/A001_C001.mov "demo-storage/Day 1/Interview take 1.mov" || true
           defaults delete com.stradaxr.mam.ingest || true
           STRADAXR_INGEST_SOURCE="$PWD/demo" STRADAXR_INGEST_STORAGE="$PWD/demo-storage" STRADAXR_INGEST_LIBRARY="$PWD/demo-library" \
+            STRADAXR_INGEST_START_AFTER=25 \
             "build/Build/Products/Debug/StradaXR Ingest.app/Contents/MacOS/StradaXR Ingest" > ingest.log 2>&1 &
-          sleep 8
+          sleep 10
           osascript -e 'tell application "StradaXR Ingest" to activate' || true
-          sleep 2
+          sleep 5
+          screencapture -x shots/ingest-list.png
+          sleep 18
           screencapture -x shots/ingest-working.png
           sleep 60
           screencapture -x shots/ingest.png

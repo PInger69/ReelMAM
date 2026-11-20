@@ -77,32 +77,36 @@ sources, ready for online / conform.
 
 ## The ingest app
 
-**StradaXR Ingest** is a second app in the same Xcode project (scheme "StradaXR Ingest"). Choose a
-source (a card, a drive, a share or any folder), choose the storage folder where originals are
-kept, and press Start. In one pass:
+**StradaXR Ingest** is a second app in the same Xcode project (scheme "StradaXR Ingest"), laid
+out like a two-pane copy tool:
 
-- a clip that is **already anywhere in the storage folder**, under any name, is not copied again:
-  it is catalogued where it is and given a proxy. It counts as the same clip only when its whole
-  content matches the source, not when its name does;
-- a clip that is **not on storage** is copied there, the copy is checked against the source, and
-  then it is catalogued and given a proxy;
-- with no storage folder chosen, nothing is copied: clips get proxies where they are, for when
-  the source is already the NAS.
+- **Sources** (left): every card reader, drive and iPhone connected to the Mac, listed as soon as
+  it appears, plus folders added by hand (a share, a folder on a drive). Each shows how it is
+  connected, read from the I/O Registry, e.g. "USB 3.2 Gen 2 · 10 Gbps". Anything below 10 Gbps
+  is marked and a warning names it, since a slow cable or a hub is the usual cause of a slow
+  offload. Tick the sources to copy from; several cards and phones copy at once.
+- **Destination** (right): the folder on the NAS or a local drive to copy into. Each source gets a
+  folder of its own name inside it (`cam 01`, `cam 02`…). Proxies on or off, the proxy format, and
+  the library to add clips to.
+- **Scan** lists every clip on the ticked sources with its size, date, where it will go, and
+  whether it is **new**, **already at the destination** (the same content anywhere in the
+  destination, under any name) or **copied before** (from the copy history this Mac keeps, or the
+  library). New clips are ticked; tick or untick any of them, or filter the list by status.
+- The bar at the bottom gives the clips and bytes ticked, the time the copy should take from each
+  source's connection speed, and whether the destination has room.
+- **Copy** copies the ticked clips, one at a time per source and every source at once. Each copy is
+  written in fixed-size buffers, a failed read or write is tried again from the same place for
+  about two and a half minutes, and the copy takes the clip's name only once it has been read back
+  and matches the source. A pulled card or a write error marks that clip as failed and the rest
+  carry on; the failed ones stay ticked so Copy tries just those again. While the next clip
+  copies, the one before is added to the library and given a proxy. A ticked clip that is already
+  at the destination is not copied again, only proxied.
+- With no destination chosen, nothing is copied: clips are proxied where they are, for when the
+  source is already the NAS.
 
-Clips and proxies go into the StradaXR A.I. MAM library on the same Mac, or into a library folder
-you choose.
-
-The Source menu lists cards and external drives (a flash card in a USB-C reader appears there as
-soon as it mounts), iPhones and cameras connected by cable, and other volumes. An iPhone does not
-mount as a volume, so its videos are fetched through the system's camera import service into a
-folder named after the phone (for example `cam 01`), then catalogued and proxied; "All Connected"
-takes several phones in one pass. The phone must be unlocked and trusted with the Mac. A video
-already fetched is not fetched again.
-
-Copies are made to survive a card or share that stumbles: each clip is copied in fixed-size
-buffers, a failed read or write is tried again from the same place for about two and a half
-minutes, a copy carries its clip's name only once it has been read back and matches the source,
-and a copy interrupted part-way is carried on by the next run.
+iPhones do not mount as volumes, so their videos are listed and fetched through the system's camera
+import service (Image Capture). The phone must be unlocked and trusted with the Mac. A fetched clip
+is checked against the size the phone gave and read back once; phones give no checksum to compare.
 
 ## The ingest client
 

@@ -4,13 +4,21 @@ import Observation
 import UniformTypeIdentifiers
 
 /// iPhones and cameras connected by cable. They do not appear as volumes, so their clips are
-/// fetched through the system's camera import service, the one Image Capture and Photos use.
+/// listed and fetched through the system's camera import service, the one Image Capture uses.
 @MainActor
 @Observable
 final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @preconcurrency ICCameraDeviceDelegate {
     struct Camera: Identifiable, Hashable {
         var id: String
         var name: String
+        /// Where it is on the USB bus, to find how fast it is connected.
+        var locationID: Int
+    }
+
+    struct Clip: Sendable {
+        var name: String
+        var size: Int64
+        var date: Date?
     }
 
     enum ImportError: LocalizedError {
@@ -22,8 +30,8 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
         var errorDescription: String? {
             switch self {
             case .notConnected(let name): return "\(name) is not connected any more."
-            case .locked(let name): return "\(name) is locked. Unlock it, tap Trust if it asks, and start again."
-            case .noAnswer(let name): return "\(name) did not list its clips. Unlock it, tap Trust if it asks, and start again."
+            case .locked(let name): return "\(name) is locked. Unlock it, tap Trust if it asks, and scan again."
+            case .noAnswer(let name): return "\(name) did not list its clips. Unlock it, tap Trust if it asks, and scan again."
             case .failed(let reason): return reason
             }
         }
@@ -35,6 +43,7 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
     @ObservationIgnored private var devices: [String: ICCameraDevice] = [:]
     @ObservationIgnored private var whenReady: [String: [(Result<Void, Error>) -> Void]] = [:]
     @ObservationIgnored private var ready: Set<String> = []
+    @ObservationIgnored private var files: [String: [String: ICCameraFile]] = [:]
 
     override init() {
         super.init()
@@ -49,41 +58,58 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
     }
 
     private func refresh() {
-        cameras = devices.map { Camera(id: $0.key, name: $0.value.name ?? "Camera") }
+        cameras = devices.map { Camera(id: $0.key, name: $0.value.name ?? "Camera", locationID: Int($0.value.usbLocationID)) }
             .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
-    // MARK: Fetching clips
+    // MARK: Listing and fetching
 
-    /// Fetches every video on the camera into `folder`. A clip already there with the same
-    /// size is left alone. Returns how many were fetched and how many were already there.
-    func fetchVideos(from camera: Camera, into folder: String,
-                     progress: @escaping @MainActor (String) -> Void) async throws -> (fetched: Int, alreadyThere: Int) {
-        guard let device = devices[camera.id] else { throw ImportError.notConnected(camera.name) }
-        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
-        progress("Reading the clip list on \(camera.name)")
-        try await open(device, name: camera.name)
+    /// Every video on the camera.
+    func clips(on cameraID: String) async throws -> [Clip] {
+        guard let device = devices[cameraID] else { throw ImportError.notConnected(name(of: cameraID)) }
+        try await open(device, name: device.name ?? "The camera")
         let videos = (device.mediaFiles ?? []).compactMap { $0 as? ICCameraFile }.filter(Self.isVideo)
-        var fetched = 0, alreadyThere = 0
-        for (index, file) in videos.enumerated() {
-            try Task.checkCancellation()
-            let name = file.name ?? "clip-\(index + 1).mov"
-            let target = folder + "/" + name
-            let expected = Int64(file.fileSize)
-            if Self.size(of: target) == expected, expected > 0 {
-                alreadyThere += 1
-                continue
-            }
-            progress("Fetching \(index + 1) of \(videos.count) from \(camera.name): \(name)")
-            try await download(file, named: name, into: folder)
-            // The camera gives no checksum, so the fetched file is at least held to the size it reported.
-            guard Self.size(of: target) == expected else {
-                try? FileManager.default.removeItem(atPath: target)
-                throw ImportError.failed("\(name) from \(camera.name) arrived incomplete and was removed. Start again to fetch it.")
-            }
-            fetched += 1
+        var byName: [String: ICCameraFile] = [:]
+        for file in videos { byName[file.name ?? ""] = file }
+        files[cameraID] = byName
+        return videos.map { Clip(name: $0.name ?? "clip.mov", size: Int64($0.fileSize), date: $0.creationDate) }
+    }
+
+    /// Fetches one clip to `path`. It is written under a temporary name and takes its own only
+    /// once it has the size the camera gave; a fetch that fails is tried twice more.
+    func fetch(cameraID: String, clip name: String, to path: String,
+               progress: @escaping @Sendable (Double) -> Void) async throws {
+        guard devices[cameraID] != nil, let file = files[cameraID]?[name] else {
+            throw ImportError.notConnected(self.name(of: cameraID))
         }
-        return (fetched, alreadyThere)
+        let folder = (path as NSString).deletingLastPathComponent
+        let partialName = (path as NSString).lastPathComponent + ".partial"
+        let partial = folder + "/" + partialName
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        var lastError: Error?
+        for attempt in 0..<3 {
+            try Task.checkCancellation()
+            if attempt > 0 { try await Task.sleep(nanoseconds: UInt64(attempt) * 2_000_000_000) }
+            try? FileManager.default.removeItem(atPath: partial)
+            do {
+                try await download(file, as: partialName, into: folder, progress: progress)
+                guard Self.size(of: partial) == Int64(file.fileSize) else {
+                    throw ImportError.failed("\(name) arrived incomplete from \(self.name(of: cameraID)).")
+                }
+                if FileManager.default.fileExists(atPath: path) { try FileManager.default.removeItem(atPath: path) }
+                try FileManager.default.moveItem(atPath: partial, toPath: path)
+                return
+            } catch {
+                lastError = error
+                if devices[cameraID] == nil { break }
+            }
+        }
+        try? FileManager.default.removeItem(atPath: partial)
+        throw lastError ?? ImportError.failed("\(name) could not be fetched.")
+    }
+
+    private func name(of cameraID: String) -> String {
+        cameras.first { $0.id == cameraID }?.name ?? "The camera"
     }
 
     private func open(_ device: ICCameraDevice, name: String) async throws {
@@ -105,20 +131,24 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
         }
     }
 
-    private func download(_ file: ICCameraFile, named name: String, into folder: String) async throws {
+    private func download(_ file: ICCameraFile, as fileName: String, into folder: String,
+                          progress: @escaping @Sendable (Double) -> Void) async throws {
+        var observation: NSKeyValueObservation?
+        defer { observation?.invalidate() }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let options: [ICDownloadOption: Any] = [
                 .downloadsDirectoryURL: URL(fileURLWithPath: folder, isDirectory: true),
-                .saveAsFilename: name,
+                .saveAsFilename: fileName,
                 .overwrite: true,
             ]
-            _ = file.requestDownload(options: options) { _, error in
+            let request: Progress? = file.requestDownload(options: options) { _, error in
                 if let error {
-                    continuation.resume(throwing: ImportError.failed("\(name) could not be fetched: \(error.localizedDescription)"))
+                    continuation.resume(throwing: ImportError.failed("\(file.name ?? "A clip") could not be fetched: \(error.localizedDescription)"))
                 } else {
                     continuation.resume()
                 }
             }
+            observation = request?.observe(\.fractionCompleted) { request, _ in progress(request.fractionCompleted) }
         }
     }
 
@@ -150,6 +180,7 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
     func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
         let id = Self.key(device)
         devices[id] = nil
+        files[id] = nil
         ready.remove(id)
         finishOpening(device, .failure(ImportError.notConnected(device.name ?? "The camera")))
         refresh()

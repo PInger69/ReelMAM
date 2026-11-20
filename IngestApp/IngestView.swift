@@ -338,7 +338,9 @@ private struct ClipTable: View {
                     ContentUnavailableView {
                         Label("No Clips Listed", systemImage: "film.stack")
                     } description: {
-                        Text(model.problems.first ?? "Tick the sources to copy from and press Scan.")
+                        Text(model.problems.first ?? (model.stage == .listed
+                            ? "No clips were found on the ticked sources."
+                            : "Tick the sources to copy from and press Scan."))
                     }
                 }
             } else if model.visibleItems.isEmpty {

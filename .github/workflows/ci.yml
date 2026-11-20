@@ -155,6 +155,8 @@ jobs:
           codesign --force --deep --sign - "$INGEST"
           codesign --verify --deep "$INGEST"
           ditto -c -k --keepParent "$INGEST" dist/StradaXR-Ingest.zip
+          # The installers, unsigned here; the Release workflow signs and notarizes them.
+          scripts/package-mac.sh --out dist
           # The ingest client: a command-line program built from the same package.
           swift build -c release --product stradaxr-ingest
           cp "$(swift build -c release --show-bin-path)/stradaxr-ingest" dist/stradaxr-ingest

@@ -1,0 +1,117 @@
+name: Release
+
+# Builds both apps, signs them with the Developer ID certificate kept in the repository's
+# secrets, has Apple notarize them, and publishes the .dmg and .pkg installers as a GitHub release.
+# Start it from the Actions tab (Run workflow) or by pushing a tag such as v0.2.0.
+#
+# Secrets (Settings › Secrets and variables › Actions):
+#   MACOS_CERTIFICATE_P12          base64 of the "Developer ID Application" certificate exported as .p12
+#   MACOS_CERTIFICATE_PASSWORD     the password given when exporting it
+#   MACOS_INSTALLER_P12            base64 of the "Developer ID Installer" certificate (.p12), for the .pkg
+#   MACOS_INSTALLER_PASSWORD
+#   NOTARY_KEY_P8                  the App Store Connect API key file (AuthKey_XXXX.p8), as text
+#   NOTARY_KEY_ID                  its key ID
+#   NOTARY_ISSUER_ID               the issuer ID shown above the keys in App Store Connect
+# Without them the installers are still made, but unsigned.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, e.g. 0.2.0"
+        required: true
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install tools
+        run: brew install xcodegen
+      - name: Work out the version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then v="${{ github.event.inputs.version }}"; else v="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Load the signing certificates
+        id: signing
+        env:
+          APP_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          APP_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          INSTALLER_P12: ${{ secrets.MACOS_INSTALLER_P12 }}
+          INSTALLER_PASSWORD: ${{ secrets.MACOS_INSTALLER_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          if [ -z "$APP_P12" ]; then
+            echo "No signing certificate in the secrets: the installers will be unsigned."
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$APP_P12" | base64 --decode > "$RUNNER_TEMP/app.p12"
+          security import "$RUNNER_TEMP/app.p12" -P "$APP_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          if [ -n "$INSTALLER_P12" ]; then
+            echo "$INSTALLER_P12" | base64 --decode > "$RUNNER_TEMP/installer.p12"
+            security import "$RUNNER_TEMP/installer.p12" -P "$INSTALLER_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          fi
+          rm -f "$RUNNER_TEMP"/*.p12
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          app_id="$(security find-identity -v -p codesigning "$KEYCHAIN" | grep 'Developer ID Application' | head -n1 | sed 's/.*"\(.*\)"/\1/')"
+          installer_id="$(security find-identity -v "$KEYCHAIN" | grep 'Developer ID Installer' | head -n1 | sed 's/.*"\(.*\)"/\1/')"
+          if [ -z "$app_id" ]; then echo "::error::The certificate in MACOS_CERTIFICATE_P12 is not a Developer ID Application certificate."; exit 1; fi
+          echo "app=$app_id" >> "$GITHUB_OUTPUT"
+          echo "installer=$installer_id" >> "$GITHUB_OUTPUT"
+          echo "keychain=$KEYCHAIN" >> "$GITHUB_OUTPUT"
+          if [ -n "$NOTARY_KEY_P8" ]; then
+            printf '%s\n' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+            echo "notary=$RUNNER_TEMP/notary.p8" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build, sign, notarize and package
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          args=(--version "${{ steps.version.outputs.version }}" --build "$GITHUB_RUN_NUMBER" --out dist)
+          if [ -n "${{ steps.signing.outputs.app }}" ]; then
+            args+=(--sign "${{ steps.signing.outputs.app }}" --keychain "${{ steps.signing.outputs.keychain }}")
+            [ -n "${{ steps.signing.outputs.installer }}" ] && args+=(--installer-sign "${{ steps.signing.outputs.installer }}")
+            if [ -n "${{ steps.signing.outputs.notary }}" ]; then
+              args+=(--notary-key "${{ steps.signing.outputs.notary }}" --notary-key-id "$NOTARY_KEY_ID" --notary-issuer "$NOTARY_ISSUER_ID")
+            fi
+          fi
+          scripts/package-mac.sh "${args[@]}"
+          ls -la dist
+      - name: Upload the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: StradaXR-installers-${{ steps.version.outputs.version }}
+          path: dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          signed="${{ steps.signing.outputs.app }}"
+          notes="StradaXR Ingest and StradaXR A.I. MAM $v for Apple Silicon Macs (macOS 14 or later).
+          Open the .dmg and drag the app to Applications, or run the .pkg to install it."
+          [ -z "$signed" ] && notes="$notes
+
+          Not signed with a Developer ID: the first time, Control-click the app and choose Open."
+          gh release create "v$v" dist/*.dmg dist/*.pkg --title "StradaXR $v" --notes "$notes" --prerelease --target "$GITHUB_SHA"
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          [ -n "${{ steps.signing.outputs.keychain }}" ] && security delete-keychain "${{ steps.signing.outputs.keychain }}" || true
+          rm -f "$RUNNER_TEMP/notary.p8"

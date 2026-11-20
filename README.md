@@ -108,6 +108,26 @@ iPhones do not mount as volumes, so their videos are listed and fetched through 
 import service (Image Capture). The phone must be unlocked and trusted with the Mac. A fetched clip
 is checked against the size the phone gave and read back once; phones give no checksum to compare.
 
+## Installers and code signing
+
+`scripts/package-mac.sh` builds both apps in Release and makes, for each, a disk image (drag to
+Applications) and an installer package (installs into /Applications) in `dist/`. Every push builds
+them unsigned in CI, as a check.
+
+To make installers that open on any Mac with no warning they must be signed with a **Developer ID**
+certificate (paid Apple Developer Program membership) and notarized by Apple:
+
+- **On a Mac**, signed in to the developer account in Xcode (Settings › Accounts): create the
+  "Developer ID Application" and "Developer ID Installer" certificates there (Manage Certificates ›
+  +), save notarization credentials once with
+  `xcrun notarytool store-credentials stradaxr --apple-id <apple id> --team-id <team id>`
+  (it asks for an app-specific password made at appleid.apple.com), then run
+  `scripts/package-mac.sh --sign "Developer ID Application: …" --installer-sign "Developer ID Installer: …" --notary-profile stradaxr`.
+  `security find-identity -v` lists the exact certificate names.
+- **On GitHub**, the **Release** workflow (Actions › Release › Run workflow, or a `v0.2.0` tag) does
+  the same and publishes the installers as a release, from certificates and an App Store Connect API
+  key stored as repository secrets; `.github/workflows/release.yml` lists them.
+
 ## The ingest client
 
 `stradaxr-ingest` is the ingest engine without a window: a command-line program for a camera

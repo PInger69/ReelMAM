@@ -156,8 +156,10 @@ final class IngestModel {
 
     private func update(_ view: IngestEngine.View) {
         self.view = view
-        copied = session?.tally?.copied ?? 0
-        alreadyOnStorage = session?.tally?.alreadyOnStorage ?? 0
+        // The last update can arrive after the pass has finished and its totals are final.
+        guard let tally = session?.tally else { return }
+        copied = tally.copied
+        alreadyOnStorage = tally.alreadyOnStorage
     }
 
     private func finish(summary: IngestClient.Summary?, error: Error?) {

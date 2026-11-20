@@ -43,6 +43,8 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
     @ObservationIgnored private var devices: [String: ICCameraDevice] = [:]
     @ObservationIgnored private var whenReady: [String: [(Result<Void, Error>) -> Void]] = [:]
     @ObservationIgnored private var ready: Set<String> = []
+    /// Devices that said they are locked; cleared when they say they are unlocked.
+    @ObservationIgnored private var locked: Set<String> = []
     @ObservationIgnored private var files: [String: [String: ICCameraFile]] = [:]
 
     override init() {
@@ -136,7 +138,9 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
     private func open(_ device: ICCameraDevice, name: String) async throws {
         let id = Self.key(device)
         if ready.contains(id) { return }
-        if device.isAccessRestrictedAppleDevice { throw ImportError.locked(name) }
+        // The locked flag is not checked here: it can be left over from before the phone was
+        // unlocked or trusted. The session is always asked for, and a phone that really is locked
+        // is waited for until it is unlocked, or until the time below runs out.
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             var answered = false
             let answer: (Result<Void, Error>) -> Void = { result in
@@ -148,7 +152,10 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
             device.delegate = self
             device.requestOpenSession()
             // A phone that is locked or was never trusted says nothing at all.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 90) { answer(.failure(ImportError.noAnswer(name))) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 90) { [weak self] in
+                let locked = self?.locked.contains(id) ?? false
+                answer(.failure(locked ? ImportError.locked(name) : ImportError.noAnswer(name)))
+            }
         }
     }
 
@@ -222,14 +229,28 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
     // MARK: ICCameraDeviceDelegate
 
     func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
+        guard !locked.contains(Self.key(device)) else { return }
         finishOpening(device, .success(()))
     }
 
+    /// The phone locked, or was locked when the session opened. Not a failure: the scan keeps
+    /// waiting, and its clips are listed once it is unlocked.
     func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {
-        finishOpening(device, .failure(ImportError.locked(device.name ?? "The iPhone")))
+        let id = Self.key(device)
+        locked.insert(id)
+        ready.remove(id)
     }
 
-    func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {}
+    /// Unlocked: what was listed while it was locked is incomplete, so the session is opened afresh.
+    func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {
+        let id = Self.key(device)
+        locked.remove(id)
+        ready.remove(id)
+        if whenReady[id] != nil, let camera = device as? ICCameraDevice {
+            camera.requestCloseSession()
+            camera.requestOpenSession()
+        }
+    }
     func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
     func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
     func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: Error?) {}

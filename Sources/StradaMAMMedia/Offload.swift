@@ -248,13 +248,17 @@ public final class OffloadTally: @unchecked Sendable {
         defer { lock.unlock() }
         if let index { return index }
         var built: [Int64: [String]] = [:]
-        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
-        if let walker = FileManager.default.enumerator(at: URL(fileURLWithPath: folder), includingPropertiesForKeys: keys,
-                                                       options: [.skipsHiddenFiles]) {
-            for case let url as URL in walker {
-                guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true,
-                      let size = values.fileSize, size > 0 else { continue }
-                built[Int64(size), default: []].append(url.path)
+        // Paths are built from the folder as it was given: a file URL can come back with another
+        // spelling of the same place (/private/var for /var), and the catalogue must not hold both.
+        if let walker = FileManager.default.enumerator(atPath: folder) {
+            for case let relative as String in walker {
+                if (relative as NSString).lastPathComponent.hasPrefix(".") {
+                    walker.skipDescendants()
+                    continue
+                }
+                guard walker.fileAttributes?[.type] as? FileAttributeType == .typeRegular,
+                      let size = (walker.fileAttributes?[.size] as? NSNumber)?.int64Value, size > 0 else { continue }
+                built[size, default: []].append(folder + "/" + relative)
             }
         }
         index = built

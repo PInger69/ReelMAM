@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// listed and fetched through the system's camera import service, the one Image Capture uses.
 @MainActor
 @Observable
-final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @preconcurrency ICCameraDeviceDelegate {
+final class PhoneCameras: NSObject, ICDeviceBrowserDelegate, ICCameraDeviceDelegate {
     struct Camera: Identifiable, Hashable {
         var id: String
         var name: String
@@ -220,68 +220,99 @@ final class PhoneCameras: NSObject, @preconcurrency ICDeviceBrowserDelegate, @pr
         waiting.forEach { $0(result) }
     }
 
-    // MARK: ICDeviceBrowserDelegate
+    // MARK: Delegate callbacks
+    //
+    // Image Capture calls these on whatever thread it likes (thumbnails arrive on a background
+    // one). Each is taken on the main thread before it touches this object's state.
 
-    func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
-        guard let camera = device as? ICCameraDevice else { return }
-        devices[Self.key(device)] = camera
-        refresh()
+    nonisolated private func onMain(_ work: @escaping @MainActor () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(work)
+        } else {
+            DispatchQueue.main.async { MainActor.assumeIsolated(work) }
+        }
     }
 
-    func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
-        let id = Self.key(device)
-        devices[id] = nil
-        files[id] = nil
-        ready.remove(id)
-        finishOpening(device, .failure(ImportError.notConnected(device.name ?? "The camera")))
-        refresh()
+    // MARK: ICDeviceBrowserDelegate
+
+    nonisolated func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
+        onMain {
+            guard let camera = device as? ICCameraDevice else { return }
+            self.devices[Self.key(device)] = camera
+            self.refresh()
+        }
+    }
+
+    nonisolated func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
+        onMain {
+            let id = Self.key(device)
+            self.devices[id] = nil
+            self.files[id] = nil
+            self.ready.remove(id)
+            self.finishOpening(device, .failure(ImportError.notConnected(device.name ?? "The camera")))
+            self.refresh()
+        }
     }
 
     // MARK: ICDeviceDelegate
 
-    func didRemove(_ device: ICDevice) {}
+    nonisolated func didRemove(_ device: ICDevice) {}
 
-    func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
-        if let error { finishOpening(device, .failure(ImportError.failed("\(device.name ?? "The camera") could not be opened: \(error.localizedDescription)"))) }
+    nonisolated func device(_ device: ICDevice, didOpenSessionWithError error: Error?) {
+        guard let error else { return }
+        let message = "\(device.name ?? "The camera") could not be opened: \(error.localizedDescription)"
+        onMain { self.finishOpening(device, .failure(ImportError.failed(message))) }
     }
 
-    func device(_ device: ICDevice, didCloseSessionWithError error: Error?) {
-        ready.remove(Self.key(device))
+    nonisolated func device(_ device: ICDevice, didCloseSessionWithError error: Error?) {
+        onMain { self.ready.remove(Self.key(device)) }
     }
 
     // MARK: ICCameraDeviceDelegate
 
-    func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
-        guard !locked.contains(Self.key(device)) else { return }
-        finishOpening(device, .success(()))
+    nonisolated func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
+        onMain {
+            guard !self.locked.contains(Self.key(device)) else { return }
+            self.finishOpening(device, .success(()))
+        }
     }
 
     /// The phone locked, or was locked when the session opened. Not a failure: the scan keeps
     /// waiting, and its clips are listed once it is unlocked.
-    func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {
-        let id = Self.key(device)
-        locked.insert(id)
-        ready.remove(id)
+    nonisolated func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {
+        onMain {
+            let id = Self.key(device)
+            self.locked.insert(id)
+            self.ready.remove(id)
+        }
     }
 
     /// Unlocked: what was listed while it was locked is incomplete, so the session is opened afresh.
-    func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {
-        let id = Self.key(device)
-        locked.remove(id)
-        ready.remove(id)
-        if whenReady[id] != nil, let camera = device as? ICCameraDevice {
-            camera.requestCloseSession()
-            camera.requestOpenSession()
+    nonisolated func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {
+        onMain {
+            let id = Self.key(device)
+            self.locked.remove(id)
+            self.ready.remove(id)
+            if self.whenReady[id] != nil, let camera = device as? ICCameraDevice {
+                camera.requestCloseSession()
+                camera.requestOpenSession()
+            }
         }
     }
-    func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
-    func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
-    func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: Error?) {
-        let waiting = thumbnailWaiters.removeValue(forKey: ObjectIdentifier(item)) ?? []
-        waiting.forEach { $0(thumbnail ?? item.thumbnail) }
+
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: Error?) {
+        let id = ObjectIdentifier(item)
+        let image = thumbnail ?? item.thumbnail
+        onMain {
+            let waiting = self.thumbnailWaiters.removeValue(forKey: id) ?? []
+            waiting.forEach { $0(image) }
+        }
     }
-    func cameraDevice(_ camera: ICCameraDevice, didReceiveMetadata metadata: [AnyHashable: Any]?, for item: ICCameraItem, error: Error?) {}
-    func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
-    func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
-    func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
+
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didReceiveMetadata metadata: [AnyHashable: Any]?, for item: ICCameraItem, error: Error?) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
+    nonisolated func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
 }

@@ -92,6 +92,18 @@ kept, and press Start. In one pass:
 Clips and proxies go into the StradaXR A.I. MAM library on the same Mac, or into a library folder
 you choose.
 
+The Source menu lists cards and external drives (a flash card in a USB-C reader appears there as
+soon as it mounts), iPhones and cameras connected by cable, and other volumes. An iPhone does not
+mount as a volume, so its videos are fetched through the system's camera import service into a
+folder named after the phone (for example `cam 01`), then catalogued and proxied; "All Connected"
+takes several phones in one pass. The phone must be unlocked and trusted with the Mac. A video
+already fetched is not fetched again.
+
+Copies are made to survive a card or share that stumbles: each clip is copied in fixed-size
+buffers, a failed read or write is tried again from the same place for about two and a half
+minutes, a copy carries its clip's name only once it has been read back and matches the source,
+and a copy interrupted part-way is carried on by the next run.
+
 ## The ingest client
 
 `stradaxr-ingest` is the ingest engine without a window: a command-line program for a camera

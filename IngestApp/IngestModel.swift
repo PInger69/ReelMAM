@@ -11,11 +11,24 @@ final class IngestModel {
     struct Volume: Identifiable, Hashable {
         var path: String
         var name: String
+        /// A card in a reader, or a drive on a cable: what ingest is usually pointed at.
+        var isExternal: Bool
+        var size: Int64?
         var id: String { path }
+
+        var label: String {
+            guard let size, size > 0 else { return name }
+            return name + " (" + ByteCountFormatter.string(fromByteCount: size, countStyle: .file) + ")"
+        }
     }
 
     // The choices are remembered between launches.
-    var source: String? { didSet { defaults.set(source, forKey: "source") } }
+    var source: String? { didSet { defaults.set(source, forKey: "source"); if source != nil { chosenCameras = [] } } }
+    /// iPhones and cameras chosen as the source in place of a folder.
+    private(set) var chosenCameras: [PhoneCameras.Camera] = []
+    let phones = PhoneCameras()
+    /// What is happening while clips are fetched from an iPhone, before the pass starts.
+    private(set) var fetching: String?
     var storage: String? { didSet { defaults.set(storage, forKey: "storage") } }
     var libraryFolder: String? { didSet { defaults.set(libraryFolder, forKey: "library") } }
     var preset: ProxyPreset = .proResProxyHalf { didSet { defaults.set(preset.rawValue, forKey: "preset") } }
@@ -31,6 +44,7 @@ final class IngestModel {
 
     private let defaults = UserDefaults.standard
     private var session: IngestClient.Session?
+    private var passTask: Task<Void, Never>?
     private var activity: NSObjectProtocol?
     private var observers: [NSObjectProtocol] = []
 
@@ -60,6 +74,10 @@ final class IngestModel {
 
     /// Why the pass cannot start, if it cannot.
     var blocker: String? {
+        if !chosenCameras.isEmpty {
+            let gone = chosenCameras.filter { !phones.cameras.contains($0) }
+            return gone.isEmpty ? nil : "\(gone.map(\.name).joined(separator: ", ")) is not connected."
+        }
         guard let source else { return nil }
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: source, isDirectory: &isFolder), isFolder.boolValue else {
@@ -69,13 +87,35 @@ final class IngestModel {
         return nil
     }
 
-    var canStart: Bool { source != nil && blocker == nil && !isRunning }
+    var canStart: Bool { (source != nil || !chosenCameras.isEmpty) && blocker == nil && !isRunning }
+
+    /// The source as the window shows it.
+    var sourceLabel: String? {
+        chosenCameras.isEmpty ? source : chosenCameras.map(\.name).joined(separator: ", ")
+    }
+
+    func choose(cameras: [PhoneCameras.Camera]) {
+        source = nil
+        chosenCameras = cameras
+    }
+
+    /// Where clips fetched from iPhones are kept: the storage folder, or this Mac's Movies folder.
+    private var phoneOriginals: String {
+        storage ?? FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("StradaXR Ingest/Originals").path
+    }
 
     func refreshVolumes() {
-        let keys: [URLResourceKey] = [.volumeNameKey]
+        let keys: [URLResourceKey] = [.volumeNameKey, .volumeIsInternalKey, .volumeIsEjectableKey, .volumeIsRemovableKey,
+                                      .volumeIsLocalKey, .volumeTotalCapacityKey]
         let urls = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: keys, options: [.skipHiddenVolumes]) ?? []
         volumes = urls.map { url in
-            Volume(path: url.path, name: (try? url.resourceValues(forKeys: Set(keys)))?.volumeName ?? url.lastPathComponent)
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            let local = values?.volumeIsLocal ?? true
+            let external = local && ((values?.volumeIsInternal == false) || values?.volumeIsEjectable == true
+                                     || values?.volumeIsRemovable == true)
+            return Volume(path: url.path, name: values?.volumeName ?? url.lastPathComponent, isExternal: external,
+                          size: values?.volumeTotalCapacity.map(Int64.init))
         }
     }
 
@@ -115,14 +155,18 @@ final class IngestModel {
     // MARK: The pass
 
     func start() {
-        guard let source, canStart else { return }
+        guard canStart else { return }
         var options = IngestClient.Options()
-        options.folders = [(source as NSString).standardizingPath]
-        options.copyDestination = storage
         options.libraryFolder = libraryFolder
         options.presets = [preset]
         options.once = true
         options.quiet = true
+        let cameras = chosenCameras
+        let originals = phoneOriginals
+        if let source, cameras.isEmpty {
+            options.folders = [(source as NSString).standardizingPath]
+            options.copyDestination = storage
+        }
         isRunning = true
         isStopping = false
         summary = nil
@@ -133,25 +177,51 @@ final class IngestModel {
         // Copying and rendering a card can take hours: the Mac must not sleep part-way.
         activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .idleSystemSleepDisabled],
                                                          reason: "Copying footage and making proxies")
-        Task.detached(priority: .userInitiated) { [weak self] in
+        passTask = Task { [weak self] in
+            guard let self else { return }
             do {
-                let summary = try await IngestClient.runOnce(options, log: { _ in }, onChange: { view in
-                    Task { @MainActor in self?.update(view) }
-                }, started: { session in
-                    Task { @MainActor in self?.session = session }
-                })
-                await self?.finish(summary: summary, error: nil)
+                // iPhones first: their clips are fetched onto storage, each phone in a folder of its own name.
+                var fetched = 0, alreadyThere = 0
+                for camera in cameras {
+                    let folder = originals + "/" + SequencePackageExporter.safeFileName(camera.name)
+                    let result = try await self.phones.fetchVideos(from: camera, into: folder) { [weak self] message in
+                        self?.fetching = message
+                    }
+                    fetched += result.fetched
+                    alreadyThere += result.alreadyThere
+                    options.folders.append(folder)
+                }
+                self.fetching = nil
+                let ready = options
+                var summary = try await Task.detached(priority: .userInitiated) {
+                    try await IngestClient.runOnce(ready, log: { _ in }, onChange: { view in
+                        Task { @MainActor in self.update(view) }
+                    }, started: { session in
+                        Task { @MainActor in self.session = session }
+                    })
+                }.value
+                if !cameras.isEmpty {
+                    summary.copied = fetched
+                    summary.alreadyOnStorage = alreadyThere
+                }
+                self.finish(summary: summary, error: nil)
             } catch {
-                await self?.finish(summary: nil, error: error)
+                self.fetching = nil
+                self.finish(summary: nil, error: error is CancellationError ? nil : error)
             }
         }
     }
 
     /// Clips being worked on are finished; nothing new is started.
     func stop() {
-        guard isRunning, let session else { return }
+        guard isRunning else { return }
         isStopping = true
-        Task { await session.engine.setPaused(true) }
+        if let session {
+            Task { await session.engine.setPaused(true) }
+        } else {
+            // Still fetching from an iPhone: the clip being fetched is finished and no more are asked for.
+            passTask?.cancel()
+        }
     }
 
     private func update(_ view: IngestEngine.View) {
@@ -170,7 +240,9 @@ final class IngestModel {
         }
         if let error { problem = error.localizedDescription }
         isRunning = false
+        isStopping = false
         session = nil
+        passTask = nil
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
         activity = nil
     }

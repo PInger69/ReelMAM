@@ -13,18 +13,38 @@ struct IngestView: View {
                 Section("Source") {
                     LabeledContent("Card or folder") {
                         HStack {
-                            path(model.source, placeholder: "None chosen")
+                            path(model.sourceLabel, placeholder: "None chosen")
                             Menu("Choose") {
-                                ForEach(model.volumes) { volume in
-                                    Button(volume.name) { model.source = volume.path }
+                                let external = model.volumes.filter(\.isExternal)
+                                let others = model.volumes.filter { !$0.isExternal }
+                                let cameras = model.phones.cameras
+                                Section("Cards and External Drives") {
+                                    ForEach(external) { volume in
+                                        Button(volume.label) { model.source = volume.path }
+                                    }
+                                    if external.isEmpty { Text("None connected") }
                                 }
-                                if !model.volumes.isEmpty { Divider() }
+                                Section("iPhones and Cameras") {
+                                    ForEach(cameras) { camera in
+                                        Button(camera.name) { model.choose(cameras: [camera]) }
+                                    }
+                                    if cameras.count > 1 {
+                                        Button("All \(cameras.count) Connected") { model.choose(cameras: cameras) }
+                                    }
+                                    if cameras.isEmpty { Text("None connected") }
+                                }
+                                Section("Other Volumes") {
+                                    ForEach(others) { volume in
+                                        Button(volume.label) { model.source = volume.path }
+                                    }
+                                }
+                                Divider()
                                 Button("Other Folder…") { model.chooseSource() }
                             }
                             .fixedSize()
                         }
                     }
-                    Text("A camera card, a drive, a network share or any folder. Nothing on it is changed.")
+                    Text("A card in a reader, a drive, an iPhone on a cable, a network share or any folder. Nothing on it is changed. An iPhone has to be unlocked and trusted with this Mac.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 .disabled(model.isRunning)
@@ -42,7 +62,9 @@ struct IngestView: View {
                         }
                     }
                     Text(model.storage == nil
-                         ? "No clips are copied. Each clip is catalogued where it is and given a proxy. Choose this when the source is already your NAS or local storage."
+                         ? (model.chosenCameras.isEmpty
+                            ? "No clips are copied. Each clip is catalogued where it is and given a proxy. Choose this when the source is already your NAS or local storage."
+                            : "Clips from an iPhone cannot stay on the phone: they are fetched into Movies › StradaXR Ingest › Originals on this Mac. Choose a storage folder to put them there instead.")
                          : "A clip that is already anywhere in this folder is not copied again: it only gets a proxy. A clip that is not there is copied, the copy is checked against the source, and then it gets a proxy.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
@@ -151,6 +173,7 @@ struct IngestView: View {
     private var status: String {
         if let problem = model.problem { return problem }
         if model.isStopping && model.isRunning { return "Stopping after the clips being worked on." }
+        if let fetching = model.fetching { return fetching }
         if model.isRunning { return "Working. The Mac stays awake until this is finished." }
         if let summary = model.summary {
             let waiting = (model.view?.counts.waiting ?? 0) + (model.view?.counts.waitingForVolume ?? 0)
@@ -158,6 +181,6 @@ struct IngestView: View {
             return waiting > 0 ? "Stopped. \(text) \(waiting) not started." : text
         }
         if let blocker = model.blocker { return blocker }
-        return model.source == nil ? "Choose a source to begin." : "Ready."
+        return model.sourceLabel == nil ? "Choose a source to begin." : "Ready."
     }
 }

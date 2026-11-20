@@ -1,27 +1,27 @@
-# Generates StadaMAM.xcodeproj. Run `xcodegen generate` (brew install xcodegen), then open it.
-name: StadaMAM
+# Generates "StradaXR AI MAM.xcodeproj". Run `xcodegen generate` (brew install xcodegen), then open it.
+name: StradaXR AI MAM
 options:
   bundleIdPrefix: com.stadaxr.mam
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
 packages:
-  StadaMAMKit:
+  StradaXRKit:
     path: .
 targets:
-  StadaMAM:
+  StradaXR AI MAM:
     type: application
     platform: macOS
     sources:
       - App
     dependencies:
-      - package: StadaMAMKit
+      - package: StradaXRKit
         product: StadaMAMCore
-      - package: StadaMAMKit
+      - package: StradaXRKit
         product: StadaMAMMedia
-      - package: StadaMAMKit
+      - package: StradaXRKit
         product: StadaMAMAI
-      - package: StadaMAMKit
+      - package: StradaXRKit
         product: StadaMAMRemote
     info:
       path: App/Info.plist

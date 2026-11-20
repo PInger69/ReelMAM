@@ -134,11 +134,11 @@ when the client adds clips while it is open.
 
 Every build on GitHub packages the app. On the repository's **Actions** tab, open the latest
 successful run and download the **StradaXR-AI-MAM** artifact. Unzip it twice to get
-`StadaMAM.app`, move it to Applications, then clear the download quarantine once, because the
+`StradaXR AI MAM.app`, move it to Applications, then clear the download quarantine once, because the
 build is not signed with an Apple Developer ID:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/StadaMAM.app
+xattr -dr com.apple.quarantine "/Applications/StradaXR AI MAM.app"
 ```
 
 ## Building
@@ -146,12 +146,12 @@ xattr -dr com.apple.quarantine /Applications/StadaMAM.app
 Requires an Apple Silicon Mac with macOS 14+ and Xcode 16+.
 
 The Xcode project is in the repository, so there is nothing to generate: open
-`StadaMAM.xcodeproj` and press Run. Two schemes are offered: **StadaMAM** (the app) and
+`StradaXR AI MAM.xcodeproj` and press Run. Two schemes are offered: **StradaXR AI MAM** (the app) and
 **stradaxr-ingest** (the ingest client).
 
 To start from nothing in Xcode: on its welcome window choose **Clone Git Repository…**, paste
 `https://github.com/PInger69/ReelMAM.git`, sign in to GitHub when asked, then open
-`StadaMAM.xcodeproj` in the folder it clones.
+`StradaXR AI MAM.xcodeproj` in the folder it clones.
 
 The project file is generated from `project.yml`, and the build on GitHub regenerates and
 commits it on `main` whenever it changes. After editing `project.yml` yourself, or adding a

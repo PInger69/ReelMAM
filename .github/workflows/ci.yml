@@ -102,7 +102,7 @@ jobs:
         run: xcodegen generate
       - name: Build app
         run: |
-          if ! xcodebuild -project StadaMAM.xcodeproj -scheme StadaMAM -configuration Debug \
+          if ! xcodebuild -project "StradaXR AI MAM.xcodeproj" -scheme "StradaXR AI MAM" -configuration Debug \
               -destination 'platform=macOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build > build.log 2>&1; then
             grep -E "error:|error |BUILD FAILED" build.log | sort -u | head -100
             exit 1
@@ -114,7 +114,9 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         continue-on-error: true
         run: |
-          git add StadaMAM.xcodeproj App/Info.plist
+          # The project was first committed under an earlier name; that copy goes.
+          git rm -r -q --ignore-unmatch StadaMAM.xcodeproj
+          git add "StradaXR AI MAM.xcodeproj" App/Info.plist
           if git diff --cached --quiet; then
             echo "The committed Xcode project is already current."
             exit 0
@@ -124,12 +126,12 @@ jobs:
           git push origin HEAD:main
       - name: Package the app for download
         run: |
-          if ! xcodebuild -project StadaMAM.xcodeproj -scheme StadaMAM -configuration Release \
+          if ! xcodebuild -project "StradaXR AI MAM.xcodeproj" -scheme "StradaXR AI MAM" -configuration Release \
               -destination 'platform=macOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build > release.log 2>&1; then
             grep -E "error:|error |BUILD FAILED" release.log | sort -u | head -100
             exit 1
           fi
-          APP=build/Build/Products/Release/StadaMAM.app
+          APP="build/Build/Products/Release/StradaXR AI MAM.app"
           # Ad-hoc signature: enough to run on an Apple Silicon Mac, not a Developer ID signature.
           codesign --force --deep --sign - "$APP"
           codesign --verify --deep "$APP"
@@ -161,9 +163,9 @@ jobs:
               -timecode "0$i:00:00:00" -metadata:s:v:0 reel_name="A00$i" "demo/A00${i}_C00${i}.mov" || true
           done
           ls -la demo
-          STADAMAM_DEMO_MEDIA="$PWD/demo" build/Build/Products/Debug/StadaMAM.app/Contents/MacOS/StadaMAM > app.log 2>&1 &
+          STADAMAM_DEMO_MEDIA="$PWD/demo" "build/Build/Products/Debug/StradaXR AI MAM.app/Contents/MacOS/StradaXR AI MAM" > app.log 2>&1 &
           sleep 40
-          osascript -e 'tell application "StadaMAM" to activate' || true
+          osascript -e 'tell application "StradaXR AI MAM" to activate' || true
           sleep 5
           screencapture -x shots/app.png
           tail -n 20 app.log || true

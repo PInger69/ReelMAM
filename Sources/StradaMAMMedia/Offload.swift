@@ -61,9 +61,15 @@ public struct OffloadPlan: Equatable, Sendable {
 /// A copy counts only once it has been read back and its checksum matches what was read from
 /// the card. Files that belong with a clip (Blackmagic `.sidecar`, RED `.RMD`, `.xmp`, `.cdl`)
 /// are copied with it. Every verified file is added to a checksum list beside the copies.
+///
+/// A clip that is already on storage is not copied again: if a file with the same content is
+/// found in the destination, or is already catalogued somewhere that is still mounted, that file
+/// is used and only its proxy is made. "The same content" is checked in full, not by name.
 public struct OffloadingIngestWorker: IngestWorker {
     public var base: LibraryIngestWorker
     public var plan: OffloadPlan
+    /// What this worker has copied and what it found already on storage.
+    public let tally = OffloadTally()
 
     public init(base: LibraryIngestWorker, plan: OffloadPlan) {
         self.base = base
@@ -74,8 +80,49 @@ public struct OffloadingIngestWorker: IngestWorker {
         guard let target = plan.destinationPath(for: path) else {
             return try await base.process(path: path, report: report)
         }
+        report("Checking storage for this clip", nil)
+        if let existing = await existingCopy(of: path, expectedAt: target) {
+            if existing == target {
+                // Our own earlier copy: make sure the files that belong with it came across too.
+                try await copy(path, to: target, report: report)
+            }
+            tally.found(card: path, at: existing)
+            var outcome = try await base.process(path: existing, report: report)
+            if outcome.note == nil { outcome.note = "Already on storage, so it was not copied again." }
+            return outcome
+        }
         try await copy(path, to: target, report: report)
+        tally.copied(path)
         return try await base.process(path: target, report: report)
+    }
+
+    /// A file on storage with exactly the content of the card file, if there is one.
+    private func existingCopy(of source: String, expectedAt target: String) async -> String? {
+        let plan = self.plan, tally = self.tally
+        let catalogued = (try? base.cataloguedSizes()) ?? [:]
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+            // Reading whole files blocks, so it has a thread of its own.
+            DispatchQueue.global(qos: .userInitiated).async {
+                let size = Self.size(of: source)
+                guard size > 0 else { return continuation.resume(returning: nil) }
+                var candidates = [target]
+                candidates += catalogued.filter { $0.value == size }.map(\.key).sorted()
+                candidates += tally.filesOnStorage(under: plan.destination)[size] ?? []
+                let onCard: (String) -> Bool = { path in plan.sources.contains { path == $0 || path.hasPrefix($0 + "/") } }
+                var seen: Set<String> = []
+                var fingerprint: String?, checksum: String?
+                for candidate in candidates where seen.insert(candidate).inserted && !onCard(candidate) {
+                    guard FileManager.default.fileExists(atPath: candidate), Self.size(of: candidate) == size else { continue }
+                    // A quick look at both ends first; the full read only for a likely match.
+                    if fingerprint == nil { fingerprint = SourceFingerprint.compute(path: source) }
+                    guard let fingerprint, SourceFingerprint.compute(path: candidate) == fingerprint else { continue }
+                    if checksum == nil { checksum = try? SequencePackageExporter.checksum(ofFileAt: source) }
+                    guard let checksum, (try? SequencePackageExporter.checksum(ofFileAt: candidate)) == checksum else { continue }
+                    return continuation.resume(returning: candidate)
+                }
+                continuation.resume(returning: nil)
+            }
+        }
     }
 
     private func copy(_ source: String, to target: String,
@@ -155,12 +202,17 @@ public struct OffloadingIngestWorker: IngestWorker {
         for (path, size) in sizes {
             if let source = plan.sourcePath(forCopy: path) { sizes[source] = size }
         }
+        // Card files whose content was found elsewhere on storage count as catalogued too.
+        for (card, existing) in tally.matches {
+            if let size = sizes[existing] { sizes[card] = size }
+        }
         return sizes
     }
 
     public func pathsNeedingProxies(among paths: [String]) -> [String] {
         var cardPath: [String: String] = [:]
-        for path in paths { cardPath[plan.destinationPath(for: path) ?? path] = path }
+        let matches = tally.matches
+        for path in paths { cardPath[matches[path] ?? plan.destinationPath(for: path) ?? path] = path }
         return base.pathsNeedingProxies(among: Array(cardPath.keys)).compactMap { cardPath[$0] }
     }
 
@@ -168,5 +220,44 @@ public struct OffloadingIngestWorker: IngestWorker {
         var filter = base.filter()
         filter.ignoredRoots.append(plan.destination)
         return filter
+    }
+}
+
+/// Counts what an offload copied and what it found already on storage, and remembers which
+/// file on storage stands for which file on the card.
+public final class OffloadTally: @unchecked Sendable {
+    private let lock = NSLock()
+    private var copiedPaths: Set<String> = []
+    private var found: [String: String] = [:]
+    private var index: [Int64: [String]]?
+
+    public init() {}
+
+    public var copied: Int { lock.withLock { copiedPaths.count } }
+    public var alreadyOnStorage: Int { lock.withLock { found.count } }
+    /// Card path to the file on storage that holds the same content.
+    public var matches: [String: String] { lock.withLock { found } }
+
+    func copied(_ card: String) { lock.withLock { _ = copiedPaths.insert(card) } }
+    func found(card: String, at path: String) { lock.withLock { found[card] = path } }
+
+    /// Every file under the destination by size, listed once: the shortlist for finding a clip
+    /// that was copied by hand into a folder of another name.
+    func filesOnStorage(under folder: String) -> [Int64: [String]] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let index { return index }
+        var built: [Int64: [String]] = [:]
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+        if let walker = FileManager.default.enumerator(at: URL(fileURLWithPath: folder), includingPropertiesForKeys: keys,
+                                                       options: [.skipsHiddenFiles]) {
+            for case let url as URL in walker {
+                guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true,
+                      let size = values.fileSize, size > 0 else { continue }
+                built[Int64(size), default: []].append(url.path)
+            }
+        }
+        index = built
+        return built
     }
 }

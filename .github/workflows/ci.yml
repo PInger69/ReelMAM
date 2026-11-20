@@ -108,6 +108,14 @@ jobs:
             exit 1
           fi
           tail -n 3 build.log
+      - name: Build the ingest app
+        run: |
+          if ! xcodebuild -project "StradaXR A.I. MAM.xcodeproj" -scheme "StradaXR Ingest" -configuration Debug \
+              -destination 'platform=macOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build > build-ingest.log 2>&1; then
+            grep -E "error:|error |BUILD FAILED" build-ingest.log | sort -u | head -100
+            exit 1
+          fi
+          tail -n 3 build-ingest.log
       - name: Keep the committed Xcode project current
         # The project file is generated from project.yml. Committing the generated copy on main
         # means the repository opens in Xcode with a double-click, with nothing to install.
@@ -116,7 +124,7 @@ jobs:
         run: |
           # The project was first committed under an earlier name; that copy goes.
           git rm -r -q --ignore-unmatch StradaMAM.xcodeproj
-          git add "StradaXR A.I. MAM.xcodeproj" App/Info.plist
+          git add "StradaXR A.I. MAM.xcodeproj" App/Info.plist IngestApp/Info.plist
           if git diff --cached --quiet; then
             echo "The committed Xcode project is already current."
             exit 0
@@ -137,6 +145,16 @@ jobs:
           codesign --verify --deep "$APP"
           mkdir -p dist
           ditto -c -k --keepParent "$APP" dist/StradaXR-AI-MAM.zip
+          # The ingest app: point it at a card or volume.
+          if ! xcodebuild -project "StradaXR A.I. MAM.xcodeproj" -scheme "StradaXR Ingest" -configuration Release \
+              -destination 'platform=macOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build > release-ingest.log 2>&1; then
+            grep -E "error:|error |BUILD FAILED" release-ingest.log | sort -u | head -100
+            exit 1
+          fi
+          INGEST="build/Build/Products/Release/StradaXR Ingest.app"
+          codesign --force --deep --sign - "$INGEST"
+          codesign --verify --deep "$INGEST"
+          ditto -c -k --keepParent "$INGEST" dist/StradaXR-Ingest.zip
           # The ingest client: a command-line program built from the same package.
           swift build -c release --product stradaxr-ingest
           cp "$(swift build -c release --show-bin-path)/stradaxr-ingest" dist/stradaxr-ingest
@@ -150,7 +168,7 @@ jobs:
           path: dist
       - name: Launch the app with sample clips and take screenshots
         continue-on-error: true
-        timeout-minutes: 6
+        timeout-minutes: 9
         run: |
           mkdir -p demo shots
           i=0
@@ -169,6 +187,22 @@ jobs:
           sleep 5
           screencapture -x shots/app.png
           tail -n 20 app.log || true
+          # The ingest app on the same clips: one is already on storage under another name, the rest are not.
+          pkill -f "StradaXR A.I. MAM.app" || true
+          mkdir -p "demo-storage/Day 1"
+          cp demo/A001_C001.mov "demo-storage/Day 1/Interview take 1.mov" || true
+          defaults delete com.stradaxr.mam.ingest || true
+          STRADAXR_INGEST_SOURCE="$PWD/demo" STRADAXR_INGEST_STORAGE="$PWD/demo-storage" STRADAXR_INGEST_LIBRARY="$PWD/demo-library" \
+            "build/Build/Products/Debug/StradaXR Ingest.app/Contents/MacOS/StradaXR Ingest" > ingest.log 2>&1 &
+          sleep 8
+          osascript -e 'tell application "StradaXR Ingest" to activate' || true
+          sleep 2
+          screencapture -x shots/ingest-working.png
+          sleep 60
+          screencapture -x shots/ingest.png
+          tail -n 20 ingest.log || true
+          echo "On storage after the pass:"; find demo-storage -type f | sort
+          echo "Proxies:"; find demo-library -type f \( -name '*.mov' -o -name '*.mp4' \) | sort
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4

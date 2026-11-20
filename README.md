@@ -27,6 +27,7 @@ said and shown in it.
 | More on-device A.I.: names of people, places and organisations in the speech, sound classification, animals, and how many people are in frame | Built; runs in the macOS tests on synthetic clips, not yet judged on real footage |
 | External A.I. hooks: a service of your choice receives each clip's transcript and tags (never the media) and can return a summary and extra tags | Built; request and reply handling tested, not yet run against a live service |
 | Subclip export: a marked range copied out of the original as its own file, without re-encoding, with its timecode moved on to match | Built; checked on the macOS build with ProRes, not yet tried by hand |
+| StradaXR Ingest app: choose a card or volume and a storage folder in a window; clips already on storage only get a proxy, the rest are copied, checked and then proxied in the same pass | Built; the pass is tested end to end on Linux, the window is built and launched by the macOS CI, not yet run on a real card |
 | Ingest client (`stradaxr-ingest`): headless copy, ingest and proxy rendering. Optionally offloads each clip off the card with a checksum-verified copy, then catalogues it and renders proxies into a library the app reads, as a single pass or continuously | Built; tested end to end on Linux and in the macOS tests, not yet run on a real card or ingest station |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
 | Cuts editor: named sequences of cuts, played through from proxies; export as a timeline (FCPXML, Premiere XML, EDL) linked to the camera originals, or as a package with the originals copied and checked; a Rec.709 viewing look for log footage and `.cube` LUTs. See `docs/cuts-editor.md` | Model, exports, package, playback and look built and tested; the editor screen compiles but has not been run by hand; nothing imported into an editing app or tried on camera footage yet |
@@ -73,6 +74,23 @@ sources, ready for online / conform.
    differs is flagged and never sent.
 3. For a proxies-only edit, export the timeline from the editing app and open it with
    **Find Source**. Save the copy that points at the originals and import it to finish.
+
+## The ingest app
+
+**StradaXR Ingest** is a second app in the same Xcode project (scheme "StradaXR Ingest"). Choose a
+source (a card, a drive, a share or any folder), choose the storage folder where originals are
+kept, and press Start. In one pass:
+
+- a clip that is **already anywhere in the storage folder**, under any name, is not copied again:
+  it is catalogued where it is and given a proxy. It counts as the same clip only when its whole
+  content matches the source, not when its name does;
+- a clip that is **not on storage** is copied there, the copy is checked against the source, and
+  then it is catalogued and given a proxy;
+- with no storage folder chosen, nothing is copied: clips get proxies where they are, for when
+  the source is already the NAS.
+
+Clips and proxies go into the StradaXR A.I. MAM library on the same Mac, or into a library folder
+you choose.
 
 ## The ingest client
 

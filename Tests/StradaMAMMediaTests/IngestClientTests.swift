@@ -148,6 +148,62 @@ struct IngestClientRunTests {
         #expect(try Catalog(path: root + "/Library/Catalog.sqlite").allAssets().count == 4)
     }
 
+    /// One pass over a card where some clips were already put on storage by hand: those get a
+    /// proxy from the file that is there and are not copied; the rest are copied, then proxied.
+    @Test func aClipAlreadyOnStorageIsNotCopiedAgain() async throws {
+        let fm = FileManager.default
+        let clips = root + "/CARD/PRIVATE/CLIPS"
+        try await makeClip("A001_C001.mov", timecode: "01:00:00:00")
+        try await makeClip("A001_C002.mov", timecode: "01:00:10:00")
+        try await makeClip("A001_C003.mov", timecode: "01:00:20:00")
+        // C001 was dragged to storage in Finder, into a folder of another name, and renamed.
+        try fm.createDirectory(atPath: root + "/Storage/Day 1/Camera A", withIntermediateDirectories: true)
+        let byHand = root + "/Storage/Day 1/Camera A/Interview take 1.mov"
+        try fm.copyItem(atPath: clips + "/A001_C001.mov", toPath: byHand)
+        // A file of the same size and name that is not the same clip must not be taken for C002.
+        var other = try Data(contentsOf: URL(fileURLWithPath: clips + "/A001_C002.mov"))
+        other[other.count / 2] ^= 0xFF
+        try other.write(to: URL(fileURLWithPath: root + "/Storage/Day 1/A001_C002.mov"))
+        let handDate = try fm.attributesOfItem(atPath: byHand)[.modificationDate] as? Date
+
+        var options = IngestClient.Options()
+        options.folders = [root + "/CARD"]
+        options.libraryFolder = root + "/Library"
+        options.copyDestination = root + "/Storage"
+        options.presets = [.h264_720]
+        options.once = true
+        options.quiet = true
+        let summary = try await IngestClient.runOnce(options, tools: tools) { _ in }
+        #expect(summary == IngestClient.Summary(ingested: 3, skipped: 0, copied: 2, alreadyOnStorage: 1, failures: []), "\(summary)")
+        #expect(IngestClient.describe(summary)
+            == "3 clips ingested.\n1 already on storage and not copied again, 2 copied.")
+
+        let copies = root + "/Storage/CARD/PRIVATE/CLIPS"
+        #expect(!fm.fileExists(atPath: copies + "/A001_C001.mov"))
+        #expect(fm.contentsEqual(atPath: clips + "/A001_C002.mov", andPath: copies + "/A001_C002.mov"))
+        #expect(fm.contentsEqual(atPath: clips + "/A001_C003.mov", andPath: copies + "/A001_C003.mov"))
+        #expect(try fm.attributesOfItem(atPath: byHand)[.modificationDate] as? Date == handDate)
+
+        let catalog = try Catalog(path: root + "/Library/Catalog.sqlite")
+        let assets = try catalog.allAssets()
+        #expect(Set(assets.map(\.sourcePath)) == [byHand, copies + "/A001_C002.mov", copies + "/A001_C003.mov"])
+        for asset in assets {
+            let proxy = try #require(try catalog.proxies(forAsset: asset.id).first)
+            #expect(proxy.status == .ready && proxy.mismatch == nil)
+        }
+
+        // Pointing at storage itself, with nowhere to copy to, only makes what is missing.
+        var inPlace = IngestClient.Options()
+        inPlace.folders = [root + "/Storage"]
+        inPlace.libraryFolder = root + "/Library"
+        inPlace.presets = [.h264_720]
+        inPlace.once = true
+        inPlace.quiet = true
+        let again = try await IngestClient.runOnce(inPlace, tools: tools) { _ in }
+        #expect(again.failures.isEmpty && again.copied == 0, "\(again)")
+        #expect(fm.fileExists(atPath: byHand))
+    }
+
     /// The offload: clips are copied off the card and checked, the catalogue points at the
     /// copies, and wiping the card afterwards loses nothing.
     @Test func aCardIsCopiedVerifiedAndCataloguedFromItsCopy() async throws {
@@ -165,7 +221,7 @@ struct IngestClientRunTests {
         options.once = true
         options.quiet = true
         let first = try await IngestClient.runOnce(options, tools: tools) { _ in }
-        #expect(first == IngestClient.Summary(ingested: 2, skipped: 0, failures: []), "\(first)")
+        #expect(first == IngestClient.Summary(ingested: 2, skipped: 0, copied: 2, failures: []), "\(first)")
 
         // The copies are identical to the card, with the sidecar, in the card's own layout.
         let fm = FileManager.default

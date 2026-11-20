@@ -177,6 +177,10 @@ public enum IngestClient {
     public struct Summary: Equatable, Sendable {
         public var ingested = 0
         public var skipped = 0
+        /// Of the clips ingested, how many were copied to storage by this run.
+        public var copied = 0
+        /// Of the clips ingested, how many were already on storage and only needed a proxy.
+        public var alreadyOnStorage = 0
         public var failures: [Failure] = []
 
         public struct Failure: Equatable, Sendable {
@@ -205,9 +209,13 @@ public enum IngestClient {
         public let library: MediaLibrary
         /// When this run began. Clips finished by an earlier run are not counted again.
         public let startedAt: Date
+        /// Set when clips are copied to storage first.
+        public let tally: OffloadTally?
 
         public func summary() async -> Summary {
             var summary = Summary()
+            summary.copied = tally?.copied ?? 0
+            summary.alreadyOnStorage = tally?.alreadyOnStorage ?? 0
             for item in await engine.queue.items {
                 let thisRun = (item.finishedAt ?? .distantFuture) >= startedAt
                 switch item.state {
@@ -224,7 +232,8 @@ public enum IngestClient {
 
     /// Opens the library and prepares the engine. Nothing is scanned until it is started.
     public static func makeSession(_ options: Options, tools: FFmpegTools? = FFmpegTools.locate(),
-                                   log: @escaping @Sendable (String) -> Void) throws -> Session {
+                                   log: @escaping @Sendable (String) -> Void,
+                                   onChange: (@Sendable (IngestEngine.View) -> Void)? = nil) throws -> Session {
         guard let places = locations(for: options) else { throw ClientError.noLibrary }
         let fm = FileManager.default
         try fm.createDirectory(atPath: (places.catalogPath as NSString).deletingLastPathComponent,
@@ -237,10 +246,13 @@ public enum IngestClient {
         let presets = options.presets
         let libraryWorker = LibraryIngestWorker(library: library, limiter: JobLimiter(limit: parallel), presets: { presets })
         let worker: IngestWorker
+        var tally: OffloadTally?
         if let destination = options.copyDestination {
             try fm.createDirectory(atPath: destination, withIntermediateDirectories: true)
-            worker = OffloadingIngestWorker(base: libraryWorker,
-                                            plan: OffloadPlan(sources: options.folders, destination: destination))
+            let offload = OffloadingIngestWorker(base: libraryWorker,
+                                                 plan: OffloadPlan(sources: options.folders, destination: destination))
+            tally = offload.tally
+            worker = offload
         } else {
             worker = libraryWorker
         }
@@ -258,19 +270,22 @@ public enum IngestClient {
         // A single pass keeps no queue of its own: what is done is in the catalog.
         let store = options.once ? nil : IngestStore(url: URL(fileURLWithPath: places.statePath))
         let engine = IngestEngine(store: store, worker: worker, settings: settings,
-                                  onChange: { reporter.report($0) })
-        return Session(engine: engine, library: library, startedAt: startedAt)
+                                  onChange: { reporter.report($0); onChange?($0) })
+        return Session(engine: engine, library: library, startedAt: startedAt, tally: tally)
     }
 
     /// Ingests what is in the folders now and returns when it is all done.
     public static func runOnce(_ options: Options, tools: FFmpegTools? = FFmpegTools.locate(),
-                               log: @escaping @Sendable (String) -> Void = { print($0) }) async throws -> Summary {
+                               log: @escaping @Sendable (String) -> Void = { print($0) },
+                               onChange: (@Sendable (IngestEngine.View) -> Void)? = nil,
+                               started: (@Sendable (Session) -> Void)? = nil) async throws -> Summary {
         for folder in options.folders {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: folder, isDirectory: &isDirectory), isDirectory.boolValue
             else { throw ClientError.missingFolder(folder) }
         }
-        let session = try makeSession(options, tools: tools, log: log)
+        let session = try makeSession(options, tools: tools, log: log, onChange: onChange)
+        started?(session)
         let engine = session.engine
         var ids: [String] = []
         for folder in options.folders {
@@ -307,6 +322,9 @@ public enum IngestClient {
         var lines = ["\(summary.ingested) clip\(summary.ingested == 1 ? "" : "s") ingested"
             + (summary.skipped > 0 ? ", \(summary.skipped) skipped" : "")
             + (summary.failures.isEmpty ? "." : ", \(summary.failures.count) failed:")]
+        if summary.alreadyOnStorage > 0 {
+            lines.insert("\(summary.alreadyOnStorage) already on storage and not copied again, \(summary.copied) copied.", at: 1)
+        }
         for failure in summary.failures {
             lines.append("  \((failure.path as NSString).lastPathComponent): \(failure.reason)")
         }

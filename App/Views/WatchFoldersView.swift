@@ -84,10 +84,10 @@ struct WatchFoldersView: View {
                             Text("Nothing in the queue.").font(.callout).foregroundStyle(.secondary)
                         }
                         ForEach(view.working) { item in
-                            ItemRow(item: item, detail: item.stage ?? "Working", progress: item.progress)
+                            IngestItemRow(item: item, detail: item.stage ?? "Working", progress: item.progress)
                         }
                         ForEach(view.failed) { item in
-                            ItemRow(item: item, detail: item.reason ?? "Failed", isProblem: true) {
+                            IngestItemRow(item: item, detail: item.reason ?? "Failed", isProblem: true) {
                                 Button("Retry") { ingest.retry(item) }.controlSize(.small)
                                 Button { ingest.dismiss(item) } label: { Image(systemName: "minus.circle") }
                                     .buttonStyle(.borderless)
@@ -95,14 +95,14 @@ struct WatchFoldersView: View {
                             }
                         }
                         ForEach(view.waiting) { item in
-                            ItemRow(item: item, detail: item.isWaitingForVolume ? "Waiting for its volume" : "Waiting")
+                            IngestItemRow(item: item, detail: item.isWaitingForVolume ? "Waiting for its volume" : "Waiting")
                         }
                         if view.counts.waiting + view.counts.waitingForVolume > view.waiting.count {
                             Text("and \(view.counts.waiting + view.counts.waitingForVolume - view.waiting.count) more waiting")
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                         ForEach(view.recentlyDone) { item in
-                            ItemRow(item: item, detail: item.reason ?? "Done")
+                            IngestItemRow(item: item, detail: item.reason ?? "Done")
                         }
                         if view.counts.failed > 1 {
                             Button("Retry All Failed") { ingest.retryAllFailed() }
@@ -115,10 +115,7 @@ struct WatchFoldersView: View {
     }
 
     private func count(_ value: Int, _ label: String) -> some View {
-        VStack(alignment: .leading) {
-            Text("\(value)").font(.title2.monospacedDigit())
-            Text(label).font(.caption).foregroundStyle(.secondary)
-        }
+        IngestCount(value: value, label: label)
     }
 
     private func statusText(for folder: WatchFolder) -> String {
@@ -133,32 +130,5 @@ struct WatchFoldersView: View {
 
     private func statusIsProblem(_ folder: WatchFolder) -> Bool {
         folder.isEnabled && ingest.view?.status[folder.id] == .offline
-    }
-}
-
-private struct ItemRow<Actions: View>: View {
-    let item: IngestItem
-    let detail: String
-    var progress: Double?
-    var isProblem = false
-    @ViewBuilder var actions: Actions
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.fileName).lineLimit(1).truncationMode(.middle)
-                Text(detail).font(.caption).foregroundStyle(isProblem ? Color.red : Color.secondary)
-                    .lineLimit(2)
-                if let progress { ProgressView(value: progress).controlSize(.small) }
-            }
-            Spacer()
-            actions
-        }
-    }
-}
-
-private extension ItemRow where Actions == EmptyView {
-    init(item: IngestItem, detail: String, progress: Double? = nil, isProblem: Bool = false) {
-        self.init(item: item, detail: detail, progress: progress, isProblem: isProblem) { EmptyView() }
     }
 }

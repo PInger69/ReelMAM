@@ -27,7 +27,8 @@ said and shown in it.
 | More on-device A.I.: names of people, places and organisations in the speech, sound classification, animals, and how many people are in frame | Built; runs in the macOS tests on synthetic clips, not yet judged on real footage |
 | External A.I. hooks: a service of your choice receives each clip's transcript and tags (never the media) and can return a summary and extra tags | Built; request and reply handling tested, not yet run against a live service |
 | Subclip export: a marked range copied out of the original as its own file, without re-encoding, with its timecode moved on to match | Built; checked on the macOS build with ProRes, not yet tried by hand |
-| Ingest client (`stradaxr-ingest`): headless watch-folder ingest and proxy rendering into a library the app reads, as a single pass or continuously | Built; tested end to end on Linux and in the macOS tests, not yet run on a real ingest station |
+| StradaXR Ingest app: choose a card or volume and a storage folder in a window; clips already on storage only get a proxy, the rest are copied, checked and then proxied in the same pass | Built; the pass is tested end to end on Linux, the window is built and launched by the macOS CI, not yet run on a real card |
+| Ingest client (`stradaxr-ingest`): headless copy, ingest and proxy rendering. Optionally offloads each clip off the card with a checksum-verified copy, then catalogues it and renders proxies into a library the app reads, as a single pass or continuously | Built; tested end to end on Linux and in the macOS tests, not yet run on a real card or ingest station |
 | Caption building, SRT and WebVTT export; shot, label and face-cluster post-processing | Built, tested |
 | Cuts editor: named sequences of cuts, played through from proxies; export as a timeline (FCPXML, Premiere XML, EDL) linked to the camera originals, or as a package with the originals copied and checked; a Rec.709 viewing look for log footage and `.cube` LUTs. See `docs/cuts-editor.md` | Model, exports, package, playback and look built and tested; the editor screen compiles but has not been run by hand; nothing imported into an editing app or tried on camera footage yet |
 | Camera RAW decoding (Blackmagic RAW, Sony X-OCN / RAW, ARRIRAW, REDCODE ...) | Not built. These clips are catalogued, searchable and relinkable; playback and proxies need each maker's SDK |
@@ -74,6 +75,59 @@ sources, ready for online / conform.
 3. For a proxies-only edit, export the timeline from the editing app and open it with
    **Find Source**. Save the copy that points at the originals and import it to finish.
 
+## The ingest app
+
+**StradaXR Ingest** is a second app in the same Xcode project (scheme "StradaXR Ingest"), laid
+out like a two-pane copy tool:
+
+- **Sources** (left): every card reader, drive and iPhone connected to the Mac, listed as soon as
+  it appears, plus folders added by hand (a share, a folder on a drive). Each shows how it is
+  connected, read from the I/O Registry, e.g. "USB 3.2 Gen 2 · 10 Gbps". Anything below 10 Gbps
+  is marked and a warning names it, since a slow cable or a hub is the usual cause of a slow
+  offload. Tick the sources to copy from; several cards and phones copy at once.
+- **Destination** (right): the folder on the NAS or a local drive to copy into. Each source gets a
+  folder of its own name inside it (`cam 01`, `cam 02`…). Proxies on or off, the proxy format, and
+  the library to add clips to.
+- **Scan** lists every clip on the ticked sources with its size, date, where it will go, and
+  whether it is **new**, **already at the destination** (the same content anywhere in the
+  destination, under any name) or **copied before** (from the copy history this Mac keeps, or the
+  library). New clips are ticked; tick or untick any of them, or filter the list by status.
+- The bar at the bottom gives the clips and bytes ticked, the time the copy should take from each
+  source's connection speed, and whether the destination has room.
+- **Copy** copies the ticked clips, one at a time per source and every source at once. Each copy is
+  written in fixed-size buffers, a failed read or write is tried again from the same place for
+  about two and a half minutes, and the copy takes the clip's name only once it has been read back
+  and matches the source. A pulled card or a write error marks that clip as failed and the rest
+  carry on; the failed ones stay ticked so Copy tries just those again. While the next clip
+  copies, the one before is added to the library and given a proxy. A ticked clip that is already
+  at the destination is not copied again, only proxied.
+- With no destination chosen, nothing is copied: clips are proxied where they are, for when the
+  source is already the NAS.
+
+iPhones do not mount as volumes, so their videos are listed and fetched through the system's camera
+import service (Image Capture). The phone must be unlocked and trusted with the Mac. A fetched clip
+is checked against the size the phone gave and read back once; phones give no checksum to compare.
+
+## Installers and code signing
+
+`scripts/package-mac.sh` builds both apps in Release and makes, for each, a disk image (drag to
+Applications) and an installer package (installs into /Applications) in `dist/`. Every push builds
+them unsigned in CI, as a check.
+
+To make installers that open on any Mac with no warning they must be signed with a **Developer ID**
+certificate (paid Apple Developer Program membership) and notarized by Apple:
+
+- **On a Mac**, signed in to the developer account in Xcode (Settings › Accounts): create the
+  "Developer ID Application" and "Developer ID Installer" certificates there (Manage Certificates ›
+  +), save notarization credentials once with
+  `xcrun notarytool store-credentials stradaxr --apple-id <apple id> --team-id <team id>`
+  (it asks for an app-specific password made at appleid.apple.com), then run
+  `scripts/package-mac.sh --sign "Developer ID Application: …" --installer-sign "Developer ID Installer: …" --notary-profile stradaxr`.
+  `security find-identity -v` lists the exact certificate names.
+- **On GitHub**, the **Release** workflow (Actions › Release › Run workflow, or a `v0.2.0` tag) does
+  the same and publishes the installers as a release, from certificates and an App Store Connect API
+  key stored as repository secrets; `.github/workflows/release.yml` lists them.
+
 ## The ingest client
 
 `stradaxr-ingest` is the ingest engine without a window: a command-line program for a camera
@@ -90,6 +144,16 @@ separate machine, point both at one folder on shared storage:
 
 ```bash
 stradaxr-ingest --library /Volumes/SAN/StradaXR --preset prores-half --preset remote-hevc /Volumes/CARD_A
+```
+
+Add `--copy-to` to offload first. Each clip is copied off the card, the copy is read back and
+its checksum compared with the card, files that belong with it (`.sidecar`, `.RMD`, `.xmp`,
+`.cdl`) go too, and the catalogue points at the copy, so the card can be wiped afterwards. Each
+card keeps its own folder and layout under the destination, with a `checksums` list of every
+verified file. Only clips and their sidecars are copied, not the rest of the card.
+
+```bash
+stradaxr-ingest --copy-to "/Volumes/RAID/Day 1" /Volumes/CARD_A /Volumes/CARD_B
 ```
 
 `--once` ingests what is there now and exits, for scripts. `stradaxr-ingest --help` lists every
@@ -113,10 +177,10 @@ when the client adds clips while it is open.
 
 ## Layout
 
-- `Sources/StadaMAMCore` — platform-independent model, catalog, timecode, proxy planning,
+- `Sources/StradaMAMCore` — platform-independent model, catalog, timecode, proxy planning,
   relink and analysis post-processing.
-- `Sources/StadaMAMMedia` — ingest, proxy rendering, thumbnails and source recall via FFmpeg.
-- `Sources/StadaMAMAI` — macOS-only Vision and Speech analysis.
+- `Sources/StradaMAMMedia` — ingest, proxy rendering, thumbnails and source recall via FFmpeg.
+- `Sources/StradaMAMAI` — macOS-only Vision and Speech analysis.
 - `App` — the SwiftUI macOS app.
 - `Tests` — unit tests plus end-to-end tests that run real FFmpeg.
 
@@ -124,11 +188,11 @@ when the client adds clips while it is open.
 
 Every build on GitHub packages the app. On the repository's **Actions** tab, open the latest
 successful run and download the **StradaXR-AI-MAM** artifact. Unzip it twice to get
-`StadaMAM.app`, move it to Applications, then clear the download quarantine once, because the
+`StradaXR A.I. MAM.app`, move it to Applications, then clear the download quarantine once, because the
 build is not signed with an Apple Developer ID:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/StadaMAM.app
+xattr -dr com.apple.quarantine "/Applications/StradaXR A.I. MAM.app"
 ```
 
 ## Building
@@ -136,12 +200,12 @@ xattr -dr com.apple.quarantine /Applications/StadaMAM.app
 Requires an Apple Silicon Mac with macOS 14+ and Xcode 16+.
 
 The Xcode project is in the repository, so there is nothing to generate: open
-`StadaMAM.xcodeproj` and press Run. Two schemes are offered: **StadaMAM** (the app) and
+`StradaXR A.I. MAM.xcodeproj` and press Run. Two schemes are offered: **StradaXR A.I. MAM** (the app) and
 **stradaxr-ingest** (the ingest client).
 
 To start from nothing in Xcode: on its welcome window choose **Clone Git Repository…**, paste
 `https://github.com/PInger69/ReelMAM.git`, sign in to GitHub when asked, then open
-`StadaMAM.xcodeproj` in the folder it clones.
+`StradaXR A.I. MAM.xcodeproj` in the folder it clones.
 
 The project file is generated from `project.yml`, and the build on GitHub regenerates and
 commits it on `main` whenever it changes. After editing `project.yml` yourself, or adding a
@@ -164,8 +228,10 @@ Run the tests (the media tests skip themselves when FFmpeg is not installed):
 swift test
 ```
 
-The catalog lives in `~/Library/Application Support/StadaXR MAM`; proxies and thumbnails in
-`~/Movies/StadaXR MAM`.
+The catalog lives in `~/Library/Application Support/StradaXR MAM`; proxies and thumbnails in
+`~/Movies/StradaXR MAM`.
+A library created before the spelling was corrected, in folders named `StadaXR MAM`, keeps
+being used where it is.
 
 ## Known gaps
 

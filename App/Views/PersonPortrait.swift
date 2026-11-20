@@ -1,6 +1,6 @@
 import AppKit
-import StadaMAMCore
-import StadaMAMMedia
+import StradaMAMCore
+import StradaMAMMedia
 import SwiftUI
 
 /// A person's face in the People list, cut from the clip they were seen in. Until it has been
@@ -31,8 +31,8 @@ enum PersonPortraits {
     private static var memory: [String: NSImage] = [:]
 
     private static var folder: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("StadaXR MAM/People")
+        AppNames.libraryFolder(in: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
+            .appendingPathComponent("People")
     }
 
     static func image(for person: Person, model: AppModel) async -> NSImage? {

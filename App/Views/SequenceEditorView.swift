@@ -1,6 +1,6 @@
 import AVFoundation
-import StadaMAMCore
-import StadaMAMMedia
+import StradaMAMCore
+import StradaMAMMedia
 import SwiftUI
 
 /// The cut screen. Three ways to work, none of which needs in and out points:

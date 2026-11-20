@@ -1,28 +1,29 @@
-# Generates StadaMAM.xcodeproj. Run `xcodegen generate` (brew install xcodegen), then open it.
-name: StadaMAM
+# Generates "StradaXR A.I. MAM.xcodeproj". Run `xcodegen generate` (brew install xcodegen), then open it.
+name: StradaXR A.I. MAM
 options:
-  bundleIdPrefix: com.stadaxr.mam
+  bundleIdPrefix: com.stradaxr.mam
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
 packages:
-  StadaMAMKit:
+  StradaXRKit:
     path: .
 targets:
-  StadaMAM:
+  StradaXR A.I. MAM:
     type: application
     platform: macOS
     sources:
       - App
+      - AppShared
     dependencies:
-      - package: StadaMAMKit
-        product: StadaMAMCore
-      - package: StadaMAMKit
-        product: StadaMAMMedia
-      - package: StadaMAMKit
-        product: StadaMAMAI
-      - package: StadaMAMKit
-        product: StadaMAMRemote
+      - package: StradaXRKit
+        product: StradaMAMCore
+      - package: StradaXRKit
+        product: StradaMAMMedia
+      - package: StradaXRKit
+        product: StradaMAMAI
+      - package: StradaXRKit
+        product: StradaMAMRemote
     info:
       path: App/Info.plist
       properties:
@@ -35,10 +36,42 @@ targets:
         NSSpeechRecognitionUsageDescription: StradaXR A.I. MAM transcribes the speech in your clips so you can search and caption them.
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.stadaxr.mam
+        PRODUCT_BUNDLE_IDENTIFIER: com.stradaxr.mam
         SWIFT_VERSION: "5.0"
         ENABLE_HARDENED_RUNTIME: YES
         # Not sandboxed: the app reads media on any volume and runs FFmpeg.
+        ENABLE_APP_SANDBOX: NO
+        CODE_SIGN_STYLE: Automatic
+        # Apple Silicon only.
+        ARCHS: arm64
+        EXCLUDED_ARCHS: x86_64
+  # Point it at a card or volume: clips not yet on storage are copied and checked, and every clip gets a proxy.
+  StradaXR Ingest:
+    type: application
+    platform: macOS
+    sources:
+      - IngestApp
+      - AppShared
+    dependencies:
+      - package: StradaXRKit
+        product: StradaMAMCore
+      - package: StradaXRKit
+        product: StradaMAMMedia
+    info:
+      path: IngestApp/Info.plist
+      properties:
+        CFBundleDisplayName: StradaXR Ingest
+        CFBundleName: StradaXR Ingest
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "14.0"
+        LSApplicationCategoryType: public.app-category.video
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.stradaxr.mam.ingest
+        SWIFT_VERSION: "5.0"
+        ENABLE_HARDENED_RUNTIME: YES
+        # Not sandboxed: the app reads cards and writes to storage on any volume.
         ENABLE_APP_SANDBOX: NO
         CODE_SIGN_STYLE: Automatic
         # Apple Silicon only.

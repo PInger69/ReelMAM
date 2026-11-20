@@ -15,8 +15,8 @@ originals.
 
 ## What is built (step 1)
 
-New target `Sources/StadaMAMRemote` (macOS, Network.framework), tests in
-`Tests/StadaMAMRemoteTests` (20 tests, including real sockets and TLS).
+New target `Sources/StradaMAMRemote` (macOS, Network.framework), tests in
+`Tests/StradaMAMRemoteTests` (20 tests, including real sockets and TLS).
 
 | Piece | File | What it does |
 | --- | --- | --- |
@@ -321,7 +321,7 @@ timecodes out, no paths) is a possible later addition if editors need to check t
    with filters, Verify, Export, and a daily emailed anchor; the audit key in the Keychain (or a 0600 file); show the link and a QR. Start the server and the relay
    or tunnel agent as one switch. Needs the `stradaxr` URL scheme in `Info.plist`; if the app is
    ever sandboxed it also needs the network server entitlement (it is not sandboxed today).
-3b. **Continuous ingest (done).** Watch folders (*Settings › Watch Folders*) import new clips by themselves and make both the local proxy and the `remoteHEVC` proxy, so editors always have something to pull; remote proxies are written under `<proxy folder>/Remote/` so they never replace the local ones. See `Sources/StadaMAMMedia/IngestEngine.swift`.
+3b. **Continuous ingest (done).** Watch folders (*Settings › Watch Folders*) import new clips by themselves and make both the local proxy and the `remoteHEVC` proxy, so editors always have something to pull; remote proxies are written under `<proxy folder>/Remote/` so they never replace the local ones. See `Sources/StradaMAMMedia/IngestEngine.swift`.
 4. **Operations.** Pre-render the day's marked copies overnight and evict old ones, per-editor rate cap and concurrent
    stream cap, last-seen in the editors list, generate and persist the self-signed certificate,
    token rotation, expiry defaults.

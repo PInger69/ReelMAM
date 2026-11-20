@@ -1,4 +1,4 @@
-import StadaMAMCore
+import StradaMAMCore
 import SwiftUI
 
 /// Shows which high-res sources stand behind the proxies or timeline the user picked.

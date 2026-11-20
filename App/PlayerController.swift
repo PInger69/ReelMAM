@@ -1,7 +1,7 @@
 import AVFoundation
 import Observation
-import StadaMAMCore
-import StadaMAMMedia
+import StradaMAMCore
+import StradaMAMMedia
 
 /// Frame-accurate transport: play, JKL shuttle, single-frame stepping, and mark in / out.
 @MainActor
